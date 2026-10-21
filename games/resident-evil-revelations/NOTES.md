@@ -1,10 +1,16 @@
 # Resident Evil Revelations - working notes
 
 Session date: 2026-10-22. Phases covered: 0 (triage), 1 (research), 2 (workspace),
-3 (understand, in progress). The owner asked for a from-zero mod.
+3 (understand), 4 (choose), 5 (build, first slice). The owner asked for a from-zero mod.
 
 Nothing in the Steam install was modified. All work happens on the copy in
 `<test copy>`.
+
+Sections below are in the order they were written. The findings of the second
+part of the session (the mode field, the loaders, the save slots, the input
+path and the first build of the mod) are in
+[Second session: the mode field, the loaders and the first build](#second-session-the-mode-field-the-loaders-and-the-first-build)
+at the end of the file.
 
 ## Game identity (recorded before following any write-up)
 
@@ -155,6 +161,11 @@ level index. That is what the executable still has to be asked about.
 4. Is there any entry point at all in the PC build, or was the campaign co-op
    cut and only the data left behind?
 
+Questions 1 and 4 are answered by the second session below: the co-op
+campaign is fully present in the build and the gate is the game mode field.
+Questions 2 and 3 are still open and are the two things the next agent has to
+resolve.
+
 ## Guesses (not verified, listed separately on purpose)
 
 - The co-op layer is probably a leftover from the 3DS original, where the game
@@ -175,3 +186,280 @@ level index. That is what the executable still has to be asked about.
 - `local/out/coop_tables_report.md` - the co-op table dump and schema
 - `<ghidra scripts>\CoopScan.java` - Ghidra script that
   resolves string references and decompiles the functions that touch them
+
+---
+
+# Second session: the mode field, the loaders and the first build
+
+Same day, later. Phases 3 (understand), 4 (choose) and the first slice of
+phase 5 (build). The game was **not** launched — the owner deferred it
+("Да, но только позже"), so everything below is static analysis plus host-side
+tests.
+
+Tooling added this session: Ghidra 12.1.4 (headless project at
+`<ghidra project>`), MSVC Build Tools 2022 with the
+VCTools workload, CMake + Ninja, and Python 3.13 with PyYAML. 1,635 functions
+were decompiled to `<ghidra out>\fn\` and indexed into
+`<ghidra out>\{xrefs,strings,callers,callees,refs}.tsv`.
+
+## The co-op gate is one int32
+
+The whole "where is co-op switched on?" question reduces to a single field:
+
+```c
+mode = *(int32 *)(*(int32 *)(DAT_01169108 + 0x24) + 0x20)
+```
+
+| piece | value | how it was confirmed |
+|---|---|---|
+| `DAT_01169108` | the global `sGameSystems` instance pointer | RTTI name `sGameSystems`; VA 0x01169108 → RVA 0x0D69108 (image base 0x00400000, no ASLR, DllCharacteristics 0x8100) |
+| `+0x24` | `sGameSystems::getData()` → the game data pointer | matches the decompiled `getData()` and the `isCoop()` assertion sites |
+| `+0x20` | the mode field inside the game data | the field every `isCoop()` / `isRaid()` branch reads |
+
+Mode values:
+
+| value | meaning |
+|---|---|
+| 0 | campaign (single player) |
+| 1 | co-op — the dormant two-player campaign |
+| 2 | raid — the online Raid Mode the PC release does expose |
+
+`FUN_004373c0` (the episode-start flow state) reads exactly this expression
+and then, in the co-op branch, switches the game system over:
+
+```c
+if (*(int *)(*(int *)(DAT_01169108 + 0x24) + 0x20) == 1) {
+    ...
+    *(undefined4 *)(*(int *)(in_ECX + 0x14) + 0x3c8) = 1;
+}
+...
+if (mode != 1) goto LAB_00437b13;
+FUN_0041a900(1);          // switch to the co-op game-system instance
+```
+
+The `unique_ptr` member at `+0x14` of that flow state points at the co-op
+player/game system in co-op mode, so the second player is created by the
+episode-start flow, not by a menu.
+
+## The two functions that read the mode while loading
+
+| function | RVA | what it does |
+|---|---|---|
+| `FUN_0042bfc0` | `0x0002BFC0` | builds `archive\game\{scene\|scene_coop}\XX\XX_event` and `archive\game\episode\XX\XX_episode` and loads them — **the point where the game picks the campaign or the co-op route** |
+| `FUN_0041b710` | `0x0001B710` | loads `archive\game\{scene\|scene_coop}\XX\XX_%02x\XX_%02x_event` and swaps every actor that has a `_coop` resource to the co-op variant |
+
+Forcing the mode to 1 in a detour around these two is what makes the game
+load the co-op campaign.
+
+## The mode also picks the save slot
+
+This is the sharpest consequence of the mode override and it is easy to miss.
+
+- `FUN_0041ba70` selects the game-system instance by mode: index **1** (the
+  co-op instance) when `mode == 1`, otherwise index **0**. The instances live
+  at `(&DAT_0116a344)[index]`.
+- `FUN_006d0cb0` uses `this + 0x60 + mode * 0x24` as the per-mode save array.
+
+So a forced co-op session reads and writes a **different save slot** than the
+campaign. On a fresh PC save, slot 0 has the campaign progress and slot 1 is
+empty. Mirroring slot 0 into slot 1 before the flip (or sharing one slot) is
+an open item, and it is the first thing to look at when the co-op campaign is
+finally launched and the game appears to "forget" the save.
+
+## The co-op campaign data is complete
+
+Re-checked against the shipped archives of the test copy: `game\scene_coop\`
+exists for every episode from `11` to `f1`, together with
+`scene_start_list_coop.ssl` and the `coop_table\*.lvt` rules. The co-op route
+is an authored campaign, not a leftover subset.
+
+## The input path: XInput (corrected)
+
+> **Correction.** An earlier version of this section said the opposite, that
+> the game reads pad state through DirectInput 8 and uses XInput for rumble
+> only. That was wrong: it was based on the assumption that ordinal 1 of
+> `XINPUT1_3.dll` is `XInputGetState`. The real export table of the shipped
+> `xinput1_3.dll` was dumped and says otherwise (see below), and the mod and
+> this note were fixed.
+
+Import table of `rerev.exe`:
+
+| import | detail |
+|---|---|
+| `DINPUT8.dll` | exactly **one** symbol: `DirectInput8Create` (import thunk at RVA `0x0B1E202`) |
+| `XINPUT1_3.dll` | by **ordinal** 2, 3, 4 and 5 (thunks at RVA `0x0B1E208`, `0x0B1E20E`, `0x0B1E214`, `0x0B1E21A`) |
+
+The export table of the system `xinput1_3.dll` (32-bit, `SysWOW64`), dumped
+from the file:
+
+| ordinal | export |
+|---|---|
+| 1 | `DllMain` |
+| 2 | **`XInputGetState`** |
+| 3 | `XInputSetState` |
+| 4 | `XInputGetCapabilities` |
+| 5 | `XInputEnable` |
+
+So the four ordinals the game imports are exactly
+`XInputGetState / XInputSetState / XInputGetCapabilities / XInputEnable`, and
+**the game reads pad state through XInput**. DirectInput 8 is used too, but
+only for the mouse and the keyboard.
+
+The call sites (all in one small input region, RVA `0x5BD000`–`0x5C1000`):
+
+| call | RVA of the call | the user index it asks for |
+|---|---|---|
+| `XInputGetState` | `0x005BDB4F` | `[esi+0x10]` of the pad object |
+| `XInputGetState` | `0x005BEFF6` | `[esi+0x10]`, guarded by `cmp byte [esi+7], 4` |
+| `XInputGetState` | `0x005C0423` | `[esi]`, guarded by `cmp byte [esi-9], 4` |
+| `XInputGetState` | `0x005C0555` | `edi`, inside a loop over a table with stride `0x2CC` |
+| `XInputGetState` | `0x005C0692` | `edi`, guarded by a byte at `[esi+7]` |
+| `XInputSetState` | `0x005BDB67`, `0x005BF00E`, `0x005BF20B`, `0x005C0438` | rumble |
+| `XInputGetCapabilities` | `0x005BDDC9` | `[esi+0x10]`, flags `1` = `XINPUT_GAMEPAD` |
+| `DirectInput8Create` | `0x005C1F09`, `0x005CB0D7`, `0x005CBE75` | — |
+
+The pattern at the call sites is `push &state; push index; call`, so the user
+index is a **per-object field** (`[this+0x10]`), not a constant: the game
+asks for "the pad that belongs to this player object". The loop at
+`0x005C0555` walks a table of per-pad records with a stride of `0x2CC` bytes
+and matches a record against a user index and a device type byte.
+
+**What this buys the mod:** the input seam is a single function, and it can
+be hooked through the game's import address table without touching the
+game's own code. The mod now does exactly that (`src/game/pad_probe.cpp`):
+it hooks `XInputGetState` and logs which user index the game polls. When the
+game is finally run in co-op mode, that log answers the decisive question:
+
+- if the game polls index **1** as well as index 0, player 2 is driven by a
+  second local pad and the online half only has to replicate *state*;
+- if it never polls index 1, the mod has to synthesise player 2's input.
+
+The same hook is where remote input has to go (`setPadOverride()`).
+
+**Still unknown:** how many pad records the game keeps and whether a pad
+object for player 2 is created at all in co-op mode.
+
+## Signature verification against the real executable
+
+The mod finds the two loaders by byte signature and refuses to patch
+anything that is not unique. Checked against the shipped `.text`:
+
+| signature | matches | RVA of the match | expected |
+|---|---|---|---|
+| `81 EC 04 02 00 00 53 55 56 8B F1 8B 46 70` (episode loader) | **1** | `0x2BFC0` | `0x2BFC0` ✔ |
+| `81 EC 28 02 00 00 53 55 56 8B F1 33 DB` (scene loader) | **1** | `0x1B710` | `0x1B710` ✔ |
+| `81 EC 04 02 00 00` (episode prefix only) | 11 | — | ambiguous ✘ |
+| `81 EC 28 02 00 00` (scene prefix only) | 2 | — | ambiguous ✘ |
+
+The different stack-frame sizes (`0x204` vs `0x228`) are what make the long
+signatures unique. The 6-byte prefix that the inline hook actually overwrites
+is *not* unique, which is why the uniqueness check exists.
+
+## The mod, first slice
+
+Repository: `<mod repo>` (its own repo, first commit
+`082b787`).
+
+- **Injection carrier:** a proxy `dinput8.dll`. The game imports exactly one
+  symbol from `DINPUT8.dll`, so a proxy that forwards it is enough to get
+  code running inside the game process. Everything else is forwarded to the
+  system copy.
+- **Hooks:** inline detours at the two loaders, overwriting the 6-byte
+  `sub esp, imm32` prologue.
+- **Behaviour:** force `mode = 1` before the original call and again after
+  it (the loader may reset the mode itself), then a watcher thread re-asserts
+  the mode every `coop_mode_poll_ms` (250 ms default) while armed.
+- **Deliberate:** mode 2 (Raid) is never touched, and the mode is only
+  written once the game data pointer is inside the game image.
+- **Guarded:** a signature that matches anything other than exactly once, or
+  whose address does not equal the expected RVA, aborts the patch and is
+  logged instead.
+
+Build and test run (host-side, no game):
+
+```
+=== running tests ===
+    Start 1: hook_test ........................   Passed    0.01 sec
+    Start 2: iat_test .........................   Passed    0.13 sec
+    Start 3: coop_mode_test ...................   Passed    0.12 sec
+
+100% tests passed, 0 tests failed out of 3
+```
+
+What the tests prove: the hook framework detours and restores correctly, the
+IAT patcher works, the mode-field offsets are the ones the mod uses, the
+read/write helpers only touch the mode field, and both loader signatures are
+unique in a synthetic `.text` and match the documented prologues.
+
+What the tests do **not** prove: that the game loads a co-op scene, that a
+second player appears, or that the save slot behaves. That needs the game.
+
+## The mod, second slice: the pad probe
+
+After the first slice, the second session added `src/game/pad_probe.{h,cpp}`
+to the mod: it hooks `XInputGetState` through the game's import address
+table (`iat::findImportSlotByAddress` + `iat::patchImportSlot`, so the
+game's own code is not touched at all) and logs
+
+- which user index the game polls,
+- the button mask, the triggers and both sticks,
+- only on a *change*, so the log stays readable.
+
+`setPadOverride()` is the seam for the network half: a callback that can
+replace the state the game sees for one user index.
+
+Build and test run after the change:
+
+```
+=== running tests ===
+    Start 1: hook_test ........................   Passed    0.14 sec
+    Start 2: iat_test .........................   Passed    0.12 sec
+    Start 3: coop_mode_test ...................   Passed    0.12 sec
+    Start 4: pad_probe_test ...................   Passed    0.12 sec
+
+100% tests passed, 0 tests failed out of 4
+```
+
+## Still unknown (the things the next session must measure)
+
+1. **Does the game create the second player at all** when the mode is co-op?
+   The episode-start flow suggests yes, but nothing has been run.
+2. **How is the second player driven** — a second local pad, or replicated pad
+   data? The seam is now known (`XInputGetState`, see above), but whether the
+   game polls a second user index in co-op mode is still unknown. The
+   `cPlayerPadSyncData` class exists, but it is attached to the Raid-mode
+   classes (`cCoopSyncData` → lobby/ready/chara), so it is probably
+   raid-only. The campaign co-op of the 3DS original used system link, i.e.
+   each system drove its own player locally and the network replicated
+   *state*.
+3. **Is the co-op game-system instance created up front** or lazily by the
+   co-op menu? If lazily, forcing the mode is not enough and the instance has
+   to be created as well.
+4. **The save slot** (see above).
+5. **The transport.** Nothing is implemented yet: no session, no sync, no
+   transport. The shipped binary has its own (`re_net\ReNetOptional.h`,
+   `SteamNetworking005`, `WS2_32.dll` with a full client and server socket
+   stack), but whether the campaign co-op path can be pointed at a transport
+   we control is unknown.
+
+## Guesses (still not verified - listed separately on purpose)
+
+- The second game-system instance (`cGameSystemDouble`) is probably created
+  at start-up and only *selected* by the mode, so flipping the mode is
+  enough. The opposite is also possible (created lazily by the menu), and the
+  difference decides how much work the mod has to do.
+- The campaign co-op of the 3DS original drove player 2 from a second
+  system over local wireless (the `systemlink_button` string in the co-op
+  menu text), which would mean the PC port expects player 2's input on a
+  second local pad and replicates state over the network. That is the most
+  convenient case for us, because it splits the problem into "route a pad"
+  and "replicate state".
+
+## Files produced this session
+
+- `<mod repo>\` — the mod (own repo)
+- `<ghidra scripts>\{CoopScan,DecompileByString,Callers,DecompileFuncs,RefFuncs}.java`
+- `<ghidra out>\fn\` — 1,635 decompiled functions
+- `<ghidra out>\*.tsv` — string/xref/caller indexes
+- `<out>\_sigcheck.py` — the signature-uniqueness check
+  (throwaway, reimplemented as a unit test in the mod repo)

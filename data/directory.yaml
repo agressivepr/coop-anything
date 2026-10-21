@@ -3193,6 +3193,42 @@
   checked: 2026-10-18
   searched:
   - search Nexus, ModDB, GitHub, Discord and YouTube via web search, 2026-10-18, only the unreleased YouTube project
+- game: Resident Evil Revelations
+  year: 2012
+  engine: MT Framework
+  project: (none found)
+  url: ''
+  other_urls: []
+  kind: gap
+  status: none
+  coop_scope:
+    story: unknown
+    enemies: unknown
+    world_state: unknown
+    items: unknown
+  players: unknown
+  networking: unknown
+  open_source: unknown
+  last_activity: unknown
+  qa: none
+  notes: The PC release (Steam appid 222480) ships the whole two-player campaign co-op layer - the scene_coop
+    archives, the _coop actor variants, a second game-system instance and the partner system - but the game mode
+    field is always 0 (campaign), so none of it is reachable and the only online mode the release exposes is
+    Raid Mode. The gate is one int32 at sGameSystems+0x24+0x20, read by two loaders (RVA 0x2BFC0 and 0x1B710).
+    The mode also picks the save slot, so a forced co-op session writes to a different (empty) slot. Pad state is
+    read through XInput (ordinal 2 = XInputGetState in the shipped xinput1_3.dll), not DirectInput. Work in
+    progress is a proxy dinput8.dll that flips the mode and probes the pad input; it is unpublished and the co-op
+    campaign has never been launched.
+  sources:
+  - https://store.steampowered.com/app/222480/Resident_Evil_Revelations/
+  - https://steamcommunity.com/app/222480/discussions/
+  - https://www.nexusmods.com/games/residentevilrevelations
+  - https://www.moddb.com/games/resident-evil-revelations/mods
+  checked: '2026-10-22'
+  searched:
+  - search GitHub, Steam community and general web for a co-op mod of the PC release, 2026-10-22, nothing found
+  - Nexus Mods and ModDB answered 403 to the fetcher, so the search there is only partly covered
+  - Reddit and YouTube not checked
 - game: Hogwarts Legacy
   year: 2023
   engine: Unreal Engine 4
