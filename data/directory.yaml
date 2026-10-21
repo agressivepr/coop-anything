@@ -3214,11 +3214,18 @@
   notes: The PC release (Steam appid 222480) ships the whole two-player campaign co-op layer - the scene_coop
     archives, the _coop actor variants, a second game-system instance and the partner system - but the game mode
     field is always 0 (campaign), so none of it is reachable and the only online mode the release exposes is
-    Raid Mode. The gate is one int32 at sGameSystems+0x24+0x20, read by two loaders (RVA 0x2BFC0 and 0x1B710).
-    The mode also picks the save slot, so a forced co-op session writes to a different (empty) slot. Pad state is
-    read through XInput (ordinal 2 = XInputGetState in the shipped xinput1_3.dll), not DirectInput. Work in
-    progress is a proxy dinput8.dll that flips the mode and probes the pad input; it is unpublished and the co-op
-    campaign has never been launched.
+    Raid Mode. It also ships the netcode for it - network::sNetworkManage with isHost(), the full cCoopSyncData
+    vocabulary with host-authoritative replies (cModifyStage/cModifyChara/cModifyEquip/cModifyColor/...),
+    per-object sync payloads (position, damage, item pickup, doors, elevators, the co-op chain lock) and a co-op
+    lobby (cCoopMenu with cSessionList/cCreateSession/cSearchSession/cLobby/cWaitOtherReady), plus a session layer
+    (nNetwork::Session*, SteamNetworking005, WS2_32). So no new netcode is needed; the missing parts are the
+    mode gate and the menu entry that exposes the co-op lobby. The gate is one int32 at sGameSystems+0x24+0x20,
+    read by two loaders (RVA 0x2BFC0 and 0x1B710). The mode also picks the save slot, so a forced co-op session
+    writes to a different (empty) slot. Both game-system instance slots are filled from start-up, so flipping the
+    mode does not trip the game's "false" assertion. Pad state is read through XInput (ordinal 2 = XInputGetState
+    in the shipped xinput1_3.dll), not DirectInput. Work in progress is a proxy dinput8.dll that flips the mode
+    and probes the pad input and the co-op state; it is unpublished and the co-op campaign has never been
+    launched.
   sources:
   - https://store.steampowered.com/app/222480/Resident_Evil_Revelations/
   - https://steamcommunity.com/app/222480/discussions/

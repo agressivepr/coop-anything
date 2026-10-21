@@ -3,14 +3,18 @@
 Session date: 2026-10-22. Phases covered: 0 (triage), 1 (research), 2 (workspace),
 3 (understand), 4 (choose), 5 (build, first slice). The owner asked for a from-zero mod.
 
-Nothing in the Steam install was modified. All work happens on the copy in
-`<test copy>`.
+Nothing in the Steam install was modified. All work happens on a copy of the
+game in a test folder (`<test copy>`; the path is in `local/`).
 
 Sections below are in the order they were written. The findings of the second
 part of the session (the mode field, the loaders, the save slots, the input
 path and the first build of the mod) are in
 [Second session: the mode field, the loaders and the first build](#second-session-the-mode-field-the-loaders-and-the-first-build)
-at the end of the file.
+at the end of the file. The findings of the third part (the two game-system
+instances, the netcode that already ships with the game, and the second slice
+of the mod) are in
+[Third session: the game already ships a netcode](#third-session-the-game-already-ships-a-netcode)
+further down.
 
 ## Game identity (recorded before following any write-up)
 
@@ -24,8 +28,8 @@ at the end of the file.
 | Architecture | x86, 32-bit, image base 0x400000 |
 | Sections | `.text` 12,301,312 bytes (entropy 6.41, normal code), `.rdata`, `.data`, `.rsrc`, `.bind` 170,712 bytes (entropy 7.97, SteamStub) |
 | Entry point | RVA 0xdf0310, inside `.bind` (SteamStub loader) |
-| Owner install | `<game dir>` (read only) |
-| Test copy | `<test copy>` |
+| Owner install | `<game dir>` (read only; the path is in `local/`) |
+| Test copy | `<test copy>` (the path is in `local/`) |
 | Steam tags | Single-player, Multi-player, Co-op, full controller support, Valve Anti-Cheat enabled. No "Online Co-op" and no "Shared/Split Screen Co-op" tag. |
 
 The `.text` section has normal code entropy, so the game code is statically
@@ -33,13 +37,16 @@ analysable; `.bind` is only the SteamStub wrapper.
 
 ## Tooling on this machine (each item checked, not assumed)
 
+Paths are in `local/`; the versions and where each tool had to be found from
+are what matter here.
+
 | Tool | Version / path | Note |
 |---|---|---|
 | Python | 3.13.15, `%LOCALAPPDATA%\Programs\Python\Python313\python.exe` | not on PATH, `python` hits the Store stub |
 | PyYAML | 6.0.2 | so `tools/build_directory.py` really runs |
 | git | 2.55.0, `%ProgramFiles%\Git\cmd\git.exe` | not on PATH |
 | JDK | Temurin 21.0.12.1, `%ProgramFiles%\Eclipse Adoptium\jdk-21.0.12.101-hotspot` | needed by Ghidra |
-| Ghidra | 12.1.4 PUBLIC 20260921, `<ghidra>` | installed this session on owner approval; SHA-256 `ddac49f9…87d2d4db` matched the hash published on the release page |
+| Ghidra | 12.1.4 PUBLIC 20260921, under the workspace folder | installed this session on owner approval; SHA-256 `ddac49f9…87d2d4db` matched the hash published on the release page |
 | MSVC | Visual Studio Build Tools 2022 17.14.42, VCTools workload, `vcvars32.bat` | installed this session on owner approval |
 | GitHub CLI | **not installed** | checked `%ProgramFiles%\GitHub CLI`, no other copy found; needed before a PR can be opened |
 
@@ -184,7 +191,7 @@ resolve.
 - `local/tools/arc_probe.py` - `.arc` layout probe
 - `local/tools/mt_tables.py` - `.lvt` and `.arc` readers (subagent, this session)
 - `local/out/coop_tables_report.md` - the co-op table dump and schema
-- `<ghidra scripts>\CoopScan.java` - Ghidra script that
+- `<ghidra scripts>/CoopScan.java` - Ghidra script that
   resolves string references and decompiles the functions that touch them
 
 ---
@@ -196,11 +203,10 @@ phase 5 (build). The game was **not** launched — the owner deferred it
 ("Да, но только позже"), so everything below is static analysis plus host-side
 tests.
 
-Tooling added this session: Ghidra 12.1.4 (headless project at
-`<ghidra project>`), MSVC Build Tools 2022 with the
-VCTools workload, CMake + Ninja, and Python 3.13 with PyYAML. 1,635 functions
-were decompiled to `<ghidra out>\fn\` and indexed into
-`<ghidra out>\{xrefs,strings,callers,callees,refs}.tsv`.
+Tooling added this session: Ghidra 12.1.4 (headless project in the workspace
+folder), MSVC Build Tools 2022 with the VCTools workload, CMake + Ninja, and
+Python 3.13 with PyYAML. 1,635 functions were decompiled into
+`<ghidra out>/fn\` and indexed into `<ghidra out>/{xrefs,strings,callers,callees,refs}.tsv`.
 
 ## The co-op gate is one int32
 
@@ -357,8 +363,7 @@ is *not* unique, which is why the uniqueness check exists.
 
 ## The mod, first slice
 
-Repository: `<mod repo>` (its own repo, first commit
-`082b787`).
+Repository: `<mod repo>` (its own repo, first commit `082b787`).
 
 - **Injection carrier:** a proxy `dinput8.dll`. The game imports exactly one
   symbol from `DINPUT8.dll`, so a proxy that forwards it is enough to get
@@ -420,7 +425,7 @@ Build and test run after the change:
 100% tests passed, 0 tests failed out of 4
 ```
 
-## Still unknown (the things the next session must measure)
+## Still unknown (updated after the third session)
 
 1. **Does the game create the second player at all** when the mode is co-op?
    The episode-start flow suggests yes, but nothing has been run.
@@ -432,34 +437,316 @@ Build and test run after the change:
    raid-only. The campaign co-op of the 3DS original used system link, i.e.
    each system drove its own player locally and the network replicated
    *state*.
-3. **Is the co-op game-system instance created up front** or lazily by the
-   co-op menu? If lazily, forcing the mode is not enough and the instance has
-   to be created as well.
+3. ~~**Is the co-op game-system instance created up front** or lazily by the
+   co-op menu?~~ — **answered in the third session: up front.** Both slots are
+   filled from start-up; see
+   [the two game-system instances](#the-two-game-system-instances-both-slots-exist-from-start-up).
 4. **The save slot** (see above).
-5. **The transport.** Nothing is implemented yet: no session, no sync, no
-   transport. The shipped binary has its own (`re_net\ReNetOptional.h`,
-   `SteamNetworking005`, `WS2_32.dll` with a full client and server socket
-   stack), but whether the campaign co-op path can be pointed at a transport
-   we control is unknown.
+5. **The transport.** Not "does one exist" any more — it does
+   (`nNetwork::Session*`, `SteamNetworking005`, `WS2_32.dll`). What is still
+   open: whether the campaign co-op path can be pointed at a transport we
+   control, and whether the Steam session is the only way into a lobby.
+6. **Where the co-op menu entry has to be re-added.** The PC interface exposes
+   only Raid matchmaking; the co-op lobby states exist in the binary but no
+   menu path to them was found yet.
+7. **What the two non-`None` `network::PlayMode` values mean**, and which one
+   is the campaign co-op. The strings name only `network::PlayMode::None`.
 
 ## Guesses (still not verified - listed separately on purpose)
 
-- The second game-system instance (`cGameSystemDouble`) is probably created
-  at start-up and only *selected* by the mode, so flipping the mode is
-  enough. The opposite is also possible (created lazily by the menu), and the
-  difference decides how much work the mod has to do.
 - The campaign co-op of the 3DS original drove player 2 from a second
   system over local wireless (the `systemlink_button` string in the co-op
   menu text), which would mean the PC port expects player 2's input on a
   second local pad and replicates state over the network. That is the most
   convenient case for us, because it splits the problem into "route a pad"
   and "replicate state".
+- `cGameSystemDouble` most likely means "the game system that can host two
+  players", and the second slot is the partner's world state. The mode
+  selects which world the local player is in, which is why the co-op world
+  has its own save slot. Not proven - the class name is a guess from the
+  leaked RTTI strings, and the second slot is created as a *child* of the
+  first one rather than as a peer, which does not fit the "two peers"
+  reading.
+- The two non-`None` `network::PlayMode` values are probably Raid and
+  campaign co-op, with the co-op one being the value the menu writes into
+  `sNetworkManage + 0xF4`. Not proven.
 
 ## Files produced this session
 
-- `<mod repo>\` — the mod (own repo)
-- `<ghidra scripts>\{CoopScan,DecompileByString,Callers,DecompileFuncs,RefFuncs}.java`
-- `<ghidra out>\fn\` — 1,635 decompiled functions
-- `<ghidra out>\*.tsv` — string/xref/caller indexes
-- `<out>\_sigcheck.py` — the signature-uniqueness check
+The workspace paths are in `local/`; the layout is:
+
+- `<mod repo>` — the mod (own git repo, three commits)
+- `<ghidra scripts>/{CoopScan,DecompileByString,Callers,DecompileFuncs,RefFuncs}.java`
+- `<ghidra out>/fn/` — 1,635 decompiled functions
+- `<ghidra out>/*.tsv` — string/xref/caller indexes
+- `<ghidra out>/_sigcheck.py` — the signature-uniqueness check
   (throwaway, reimplemented as a unit test in the mod repo)
+
+## Third session: the game already ships a netcode
+
+Same day, later part. The plan was to map the two game-system instances and
+then work out what the mod still has to build. The mapping turned up something
+that changes the design of the whole project:
+
+> **The PC build contains a complete, host-authoritative network layer for
+> the campaign co-op.** The mod does not have to write a netcode. It has to
+> unlock the one that is already in the binary.
+
+Everything below is split into what was **observed** in the shipped
+executable, what was **derived** from those observations, and what is still
+**unknown**.
+
+### An RVA that was read wrong
+
+Ghidra prints a data symbol with its *virtual address*. `PTR_FUN_0106f0b4` is
+the address `0x0106F0B4`, so its RVA is `0x0106F0B4 - 0x400000 = 0x00C6F0B4`,
+which is in `.rdata`. An earlier note in this file read it as RVA `0x06F0B4`;
+that address is inside `.text` and was being disassembled as code, which is
+why the vtable looked like garbage.
+
+The section table of the shipped `rerev.exe` (raw offsets, for the record):
+
+| section | RVA | virtual size | raw offset | raw size |
+|---|---|---|---|---|
+| `.text` | `0x00001000` | `0x00BBB27B` | `0x00000400` | `0x00BBB400` |
+| `.rdata` | `0x00BBD000` | `0x00155A50` | `0x00BBB800` | `0x00155C00` |
+| `.data` | `0x00D13000` | `0x000D5BE0` | `0x00D11400` | `0x00055E00` |
+| `.rsrc` | `0x00DE9000` | `0x00006228` | `0x00D67200` | `0x00006400` |
+| `.bind` | `0x00DF0000` | `0x00029AD8` | `0x00D6D600` | `0x00029AD8` |
+
+With the corrected RVAs the two vtables read as pointers:
+
+| vtable | RVA | entries |
+|---|---|---|
+| class A | `0x00C6F0B4` | `0x00721B40, 0x00F4E480, 0x00A055F0, 0x0042E750, 0x00402990, 0x004A7850, 0x004A7850, 0x0042E750, …` |
+| class B | `0x00C6F158` | `0x007227F0, 0x00F4E480, 0x00A055F0, 0x0042E750, 0x00402990, 0x004A7850, 0x004A7850, 0x0042E750, …` |
+
+They are identical from entry 1 on, which is the classic shape of a derived
+class. The slot at `vtable - 4` is **not** a `COL` (there is no MSVC RTTI
+there), so the class names could not be recovered from the RTTI; the names
+below come from the leaked source paths and from the class names in the
+assert messages instead.
+
+### The two game-system instances: both slots exist from start-up
+
+**Observed** (disassembly of `FUN_00723790`, `FUN_007236e0`, `FUN_00721ba0`,
+`FUN_00721b40`, `FUN_00722790`):
+
+| class | vtable RVA | constructor | destructor | own fields |
+|---|---|---|---|---|
+| `cGameSystem` (A) | `0x00C6F0B4` | `FUN_00721ba0(slot)` | `FUN_00721b40` | `m_index` at `+0x20` |
+| `cGameSystemDouble` (B) | `0x00C6F158` | `FUN_00723790(desiredIndex)` | `FUN_00722790` | `+0x24` own slot, `+0x28` child pointer |
+| class C (derived from B) | `0x00C6F17C` | `FUN_007236e0` | — | size `0x54`, scene object at `+0x40` |
+
+`FUN_00721ba0` is the **only** writer of the instance array
+`(&DAT_0116a344)[slot]` (one store site, `mov [edi*4+0x0116a344], esi` at RVA
+`0x321C0A`), and it asserts that the slot is free and that
+`slot < InstanceCount_` with `InstanceCount_ == 2`
+(`cGameSystem.h:0x47`, "index < InstanceCount_"). It has exactly **one**
+caller.
+
+The constructor of the derived class, `FUN_00723790`, disassembles to:
+
+```
+slot = (instances[desiredIndex] == 0) ? desiredIndex : desiredIndex + 1;
+cGameSystem::cGameSystem(slot);            // FUN_00721ba0: registers this
+vptr = 0x106f158;                           // cGameSystemDouble
+this + 0x28 = 0;
+if (instances[desiredIndex + 1] != 0) {      // early return, no child
+    this + 0x24 = desiredIndex + 1;
+    return this;
+}
+this + 0x24 = desiredIndex;
+child = new (0x54) classC;                  // FUN_007236e0
+this + 0x28 = child;
+```
+
+and `FUN_007236e0` (the constructor of class C) calls `FUN_00723790(0)` with
+`ECX` = its own `this`, so a class C *is* a `cGameSystemDouble` with extra
+members.
+
+The manager `FUN_00792020` (it sets `DAT_01169108 = this`, the
+`sGameSystems` singleton) creates one class C at `+0x6C`. That instance
+registers itself in slot 0 and then creates a child, which registers itself in
+slot 1 (slot 0 is taken by then) and takes the early-return path, so it has
+no child of its own. The manager's reset function `FUN_00792440` destroys the
+instance at `+0x6C` and creates a new one, which refills both slots.
+
+**Derived from the above:** the co-op game system — slot 1 — is already there
+when the title screen appears. `FUN_0041a900(1)` therefore does **not** trip
+its `"false"` assertion when the mode is flipped to 1. This settles the third
+open question of the previous session.
+
+**Derived:** slot 1 is created as a *child* of slot 0, and `+0x24` holds the
+slot index whose scene object (`(&DAT_0117cc90)[index]`) the object owns.
+So the two slots are not two equal peers; the second one belongs to the
+first.
+
+### The network layer that ships with the game
+
+**Observed** (string literals in `.rdata`, cross-checked against the
+decompilation):
+
+`network::sNetworkManage` — the netcode singleton, global `DAT_01169398`
+(RVA `0x0D69398`). Its constructor is `FUN_00880f10`; it asserts `"false"`
+when the singleton already exists, exactly like `sGameSystems`, and it is the
+only writer of the global (one store site, RVA `0x480F44`). Its source path
+is `prog\game\network\sNetworkManage.cpp`. Fields that the constructor
+initialises and that the code reads:
+
+| offset | constructor writes | meaning |
+|---|---|---|
+| `+0x30` | `0` | flag bits |
+| `+0xE4`, `+0xE8` | `0x80011010` | unknown |
+| `+0xF4` | `-1` | the play mode the co-op menu writes |
+| `+0xF8` | `-1` | the player index |
+
+`isHost()` is used as an assertion all over the code:
+`network::sNetworkManage::getInstance().isHost() == false` /
+`!= false` appear in `FUN_006734a0`, `FUN_006735d0` and `FUN_00674970`.
+
+`network::sCoopManager` (`prog\game\network\sCoopManager.cpp`,
+`FUN_0087edc0`) with the nested classes `cStageInfo`, `cCoopSkill` and
+`cSaveProc`; the network manager's constructor builds eight of them
+(`FUN_0087dad0` in a loop of eight), i.e. one per player slot.
+
+`cCoopSyncData` (`prog\game\network\cCoopSyncData.cpp`) is the **complete
+campaign sync vocabulary**, and every message has a host-authoritative reply
+(the `cRe…` twin):
+
+| message | reply | what it carries |
+|---|---|---|
+| `cCreateTimeSyncData` | `cReCreateTimeSyncData` | session start time |
+| `cLobbyInSyncData` | `cReLobbyInSyncData` | a player entered the lobby |
+| `cLobbyReturnSyncData` | `cReLobbyReturnSyncData` | a player left the lobby |
+| `cModifyStageSyncData` | `cReModifyStageSyncData` | **which episode/stage the partner is in** |
+| `cModifyCharaSyncData` | `cReModifyCharaSyncData` | the partner's character |
+| `cModifyEquipSyncData` | `cReModifyEquipSyncData` | the partner's equipment |
+| `cModifyColorSyncData` | `cReModifyColorSyncData` | the partner's colour |
+| `cModifyMissionSyncData` | `cReModifyMissionSyncData` | mission state |
+| `cUnlockStageSyncData` | `cReUnlockStageSyncData` | stage unlock |
+| `cPresenceSyncData` | `cRePresenceSyncData` | presence |
+| `cKickSyncData` | `cReKickSyncData` | kick |
+| `cReadyOn/OffSyncData` | `cReReadyOn/OffSyncData` | ready state |
+| `cReadySyncEndSyncData` | `cReReadySyncEndSyncData` | ready-up finished |
+| `cCutStartSyncData` / `cCutStartEndSyncData` / `cCutEndSyncData` | `cRe…` | cutscene start/end |
+| `cArrangeEndSyncData` / `cArrangeSyncEndSyncData` | `cRe…` | enemy arrangement |
+| `cContinueSyncData` | `cReContinueSyncData` | continue |
+| `cRushStartSyncData`, `cRushReadyKillSyncData`, `cRushLoadEndSyncData`, `cRushArrangeEndSyncData`, `cRushSyncEndSyncData` | `cRe…` | the "rush" (timed) mode |
+| `cReadyKillSyncData`, `cResultSyncData`, `cResultEndSyncData` | `cRe…` | results |
+| `cDeathEnemySyncData`, `cNetworkDeadSyncData` | `cRe…` | deaths |
+| `cWantedSyncData`, `cZZZSyncData` | `cRe…` | misc state |
+
+Per-object sync payloads (`cNetSyncData` subclasses):
+
+| object | payload |
+|---|---|
+| `uCharaBase` | `cPositionSyncData`, `cDamageSyncData` |
+| `sItem` | `cDropItemSyncData`, `cEnemyDropSyncData`, `cPickupItemSyncData` |
+| `uItem` | `cGetItemSyncData` |
+| `uWeapon` | `cExplodeSyncData`, `cShootDownSyncData` |
+| `uDoor2pBase` | `cDoor2pSyncData` |
+| `uElevatorBase` | `cElevatorSwitchOnSyncData`, `cElevatorOutOfBlockSyncData`, `cElevatorDoorOpenSyncData` |
+| `uCoopChainLock` | `cCoopChainHostCheckSyncData`, `cCoopChainHostAnswerSyncData` — the chain lock is a **host question / host answer** pair |
+| `sActionCommand` | `cMediateData`, `cMediateResultData`, `cUnlockData` |
+| `cCutRushState` | `cLoadArrangeSyncData`, `cSetArrangeSyncData`, `cActivateEnemySyncData` |
+
+Transport and session layer: `nNetwork::Session`, `nNetwork::SessionDriver`,
+`nNetwork::SessionDatabase`, `nNetwork::Route`, `nNetwork::Transport`,
+`SteamNetworking005`, and `WS2_32.dll` with a full client and server socket
+stack.
+
+### The co-op menu
+
+`prog\game\gui\revel\coop\cCoopMenu.cpp` and `cCoopMenuState.cpp`. The menu
+states are: `cStateBase`, `cRaidMenuState`, `cQuickConfig`, `cPlayerMatch`,
+`cCreateConfig`, `cCustomMatch`, `cSessionList`, `cLobbyBase`, `cLobby`,
+`cWaitOtherReady`, `cCreateSession`, `cSearchSession`, `cShortCutMoving`,
+`cEndErrorJump`.
+
+`FUN_007cb7b0` (`cCoopMenuState.cpp`) reads a play mode out of the menu
+object at `+0x408` and branches on it:
+
+| value | behaviour |
+|---|---|
+| `0` | `network::PlayMode::None` → leave the menu (transition to state 6) |
+| `1` | a co-op specific path; asks `DAT_01169110` about something (argument 10) and sets `menu + 0x3F2 = 1` |
+| `2` | the same, and additionally sets `sNetworkManage + 0xF8 = 0` (the local player is player 0) |
+| other | assertion `"mode != network::PlayMode::None"` (`cCoopMenuState.cpp:0x5a3`) |
+
+and finally writes `sNetworkManage + 0xF4 = uVar5` (`0` or `2`).
+
+**Unknown:** the two non-`None` values are not named anywhere in the strings;
+Raid and campaign co-op are the obvious candidates but nothing confirms it.
+
+### What this changes for the mod
+
+The previous plan was "write a host-authoritative netcode for the mod". That
+is now the wrong plan. The remaining work is:
+
+1. **the mode gate** — done (the mod flips the mode field);
+2. **a way into the co-op menu** — the PC interface exposes only Raid
+   matchmaking, so the co-op lobby states have to be reachable somehow;
+3. **reuse the game's own session and transport** instead of shipping one.
+
+### The mod, second slice of the third session: the co-op state probe
+
+The mod gained `src/game/coop_state.{h,cpp}` (commit `348ece6` in the mod
+repo). It **only reads**:
+
+```
+mode           = *(int32  *)((uint8 *)gameSystems->getData() + 0x20)
+instances      = (uint32_t *)(imageBase + 0x0D6A344)   // two slots
+netManager     = *(uint32_t **)(imageBase + 0x0D69398) // network::sNetworkManage
+netPlayMode    = *(int32  *)(netManager + 0xF4)
+netPlayerIndex = *(int32  *)(netManager + 0xF8)
+netFlags       = *(uint32 *)(netManager + 0x30)
+```
+
+and logs a line whenever one of them changes:
+
+```
+coop state: mode=1 instances=2/2 coop_instance=1 net=playmode=-1 player=-2 flags=00000000
+```
+
+`playmode` stays `-1` while the network manager has never started a session,
+`player` is `-2` before the manager exists. If the mode flip alone moves
+`playmode` away from `-1`, the game starts a session by itself and the missing
+piece is only the menu entry; if it does not, the netcode needs to be woken up
+by the mod.
+
+The same commit **guards the mode flip**: the game reads instance slot 1 when
+the mode is co-op and asserts `"false"` when that slot is empty, so the mod
+now checks that the co-op instance is there before it writes the mode, and
+says so in the log instead of writing. The check is redundant for this build
+(both slots exist), but the mod must not depend on that.
+
+Build and test run after the change:
+
+```
+=== running tests ===
+    Start 1: hook_test ........................   Passed    0.14 sec
+    Start 2: iat_test .........................   Passed    0.13 sec
+    Start 3: coop_mode_test ...................   Passed    0.13 sec
+    Start 4: pad_probe_test ...................   Passed    0.12 sec
+    Start 5: coop_state_test ..................   Passed    0.13 sec
+
+100% tests passed, 0 tests failed out of 5
+```
+
+What the new test proves: the instance slots are read without running off
+the end of the array, the co-op instance is detected as slot 1, the network
+manager fields are read at the documented offsets, a missing manager is not
+read at all, and the log line is formatted safely. What it does **not**
+prove: that the game reacts to the mode flip. That needs the game.
+
+### Still open after this session
+
+- the game has to be run at least once with `coop_state = 1` and
+  `pad_probe = 1` to answer: does the co-op path react to the mode flip, does
+  a second pad index get polled, and does a session ever start;
+- the missing menu entry has to be found (which function builds the "Online"
+  entry and why only Raid is offered);
+- the save-slot question (slot 0 vs slot 1) is still open and only shows up
+  in a real run.
+
