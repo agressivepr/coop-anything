@@ -180,7 +180,7 @@ so far is the reverse engineering above plus the first slices of the mod:
    them changes:
 
    ```
-   coop state: mode=1 instances=2/2 coop_instance=1 net=playmode=-1 player=-2 flags=00000000
+   coop state: mode=1 instances=2/2 coop_instance=1 net=playmode=-1 player=-2 flags=00000000 session=0 state=0 status=0
    ```
 
    `playmode` stays `-1` while the network manager has never started a
