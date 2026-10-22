@@ -4,295 +4,158 @@
 |---|---|
 | Engine | MT Framework (`KATARIBE`, project tree `bhr\biorevhd`) |
 | Versions tested | PC/Steam appid **222480**, build 13298487; `rerev.exe` 14,260,576 bytes, SHA-256 `1573B79EB921B1E7F571E6DEB71C39961C7F1940FAD6D19283FC3AEA7FCA48AA`; x86, image base 0x400000, no ASLR |
-| Projects | no public co-op project found; `re1coop` is in progress and **not published** (see the notes) |
+| Projects | `re1coop` (in progress, unpublished) — probe only; no public co-op project found |
 | QA level | none |
 | Last updated | 2026-10-22 |
 
 ## Where things stand
 
-Nobody can play the campaign together today, and no public project tries.
+**This game cannot be played co-op in its campaign, because it has no campaign
+co-op.** The PC release ships exactly one two-player mode, and it is not
+hidden: **Raid Mode**, the second entry of the main menu
+(`КАМПАНИЯ` / `РЕЖИМ «РЕЙД»` / `ПАРАМЕТРЫ`). The game's own description of that
+entry is *"Режим совместного прохождения, в котором вы боретесь с врагами
+разной сложности."* — co-op play, against enemies of varying difficulty. The
+campaign is single player and its pause menu has no invite path
+(`ЗАГРУЗКА` / `ПАРАМЕТРЫ` / `ВЫЙТИ`).
 
-The interesting part is that the PC release already contains the whole
-two-player campaign **and the network layer for it**. The co-op scene route
-(`game\scene_coop\` for every episode from `11` to `f1`), the `_coop` variants
-of the scene actors, the partner system (`cNpcThinkCoop_*`,
-`uGUI_CoopEnemyHP`, `uGUI_PartnerWarning`, `mIsCallPartner`,
-`FsmSetPartnerAttackStatus`), a second game-system instance
-(`cGameSystemDouble`) and dozens of gameplay branches that test the game mode
-are all in the shipped build and in the shipped archives — and so is a
-host-authoritative netcode with a co-op lobby (see
-[The network layer ships with the game](#the-network-layer-ships-with-the-game)).
-
-What is closed is the switch: the game mode field is always `0` (campaign) on
-PC, so none of that code is reachable. The only online mode the release
-exposes is Raid Mode.
-
-The work in progress flips that field. Nothing has been launched yet: the
-override is verified against the shipped binary and by host-side unit tests,
-but the co-op campaign itself has never been run, so the QA level stays
-`none`.
+An earlier version of this write-up claimed the opposite: that the PC build
+contains a complete two-player campaign with its netcode, closed only by a
+`mode` field that is always `0`. **That was wrong**, and the section
+[How the game works (for co-op)](#how-the-game-works-for-co-op) now records
+what replaced it and how it was measured. The `re1coop` mod that was built on
+the claim is kept as instrumentation and as a record; it does not add co-op.
 
 ## Existing work
 
 | project | state |
 |---|---|
-| `re1coop` (in progress, unpublished) | a proxy `dinput8.dll` that flips the game mode to co-op around the two loaders that read it, plus probes of the pad input and of the co-op state. It does **not** contain a netcode — the game already has one. |
+| `re1coop` (in progress, unpublished) | proxy `dinput8.dll` that loads into the game and reports its state (mode, game-system instances, network manager fields, pad index). It used to write the mode field; that is now disabled. No netcode. |
 | No other project found | — |
 
-Searched for public co-op mods on 2026-10-22: Steam community, GitHub and
-general web search turned up nothing for the PC release. Nexus Mods and
-ModDB refused the fetcher with HTTP 403 and the Steam community answered 429,
-so those two are only partly covered; Reddit and YouTube were not checked.
-
-The 3DS original of the same game shipped a two-player mode, and the PC build
-still carries its data and its code — the co-op menu text still mentions
-`systemlink_button` and `xboxlive_party_button`. The PC port kept the
-campaign co-op and dropped the entry point, which is why this is a mod job
-rather than a config change.
+Searched on 2026-10-22: Steam community, GitHub, general web search turned up
+nothing for the PC release. Nexus Mods and ModDB refused the fetcher with
+HTTP 403 and the Steam community answered 429, so those are only partly
+covered; Reddit and YouTube were not checked.
 
 ## How the game works (for co-op)
 
-**The gate.** One `int32`:
+### The mode field — what it actually says
+
+One `int32`:
 
 ```c
 mode = *(int32 *)(*(int32 *)(sGameSystems + 0x24) + 0x20)
 ```
 
-`sGameSystems` is a global pointer at RVA `0x0D69108`, `+0x24` is
-`getData()` and `+0x20` inside the game data is the mode: `0` = campaign,
-`1` = co-op, `2` = raid.
+`sGameSystems` is a global pointer at RVA `0x0D69108`, `+0x24` is `getData()`
+and `+0x20` inside the game data is the mode. Measured **in a running game**
+with the probe in `re1coop`:
 
-**The loaders.** Two functions read that field while loading:
+| where | `mode` |
+|---|---|
+| title screen / main menu | `0` |
+| Raid Mode lobby | `1` |
+| Raid Mode gameplay | `1` |
 
-| function | RVA | role |
-|---|---|---|
-| `FUN_0042bfc0` | `0x0002BFC0` | builds `archive\game\{scene\|scene_coop}\…` and the episode paths — picks the campaign or the co-op route |
-| `FUN_0041b710` | `0x0001B710` | loads the per-scene files and swaps every actor that has a `_coop` resource to the co-op variant |
+So `0` = campaign/neutral and **`1` = Raid Mode**. The same probe shows the
+network manager's `playmode` going `-1` (menus) → `0` (Raid lobby) → `1`
+(Raid gameplay). No value other than `0` or `1` was observed for the mode.
 
-**The episode start.** `FUN_004373c0` switches to the co-op game-system
-instance (`FUN_0041a900(1)`) when the mode is co-op, so the second player is
-created by the episode flow and not by a menu.
+What this kills: the claim that `1` is a dormant campaign co-op and `2` is
+Raid Mode. `1` is the mode the game already uses for its shipped two-player
+mode.
 
-**The save system follows the mode.** `FUN_0041ba70` picks the game-system
-instance by mode (index 1 for co-op, index 0 otherwise, instances at
-`(&DAT_0116a344)[index]`) and `FUN_006d0cb0` uses
-`this + 0x60 + mode * 0x24` as the per-mode save array. **A forced co-op
-session therefore reads and writes a different save slot than the campaign**,
-and on a fresh PC save that slot is empty.
+### Why the assets looked like campaign co-op
 
-**The input path is XInput.** `rerev.exe` imports `XINPUT1_3.dll` by ordinal;
-the shipped `xinput1_3.dll` export table is `1=DllMain, 2=XInputGetState,
-3=XInputSetState, 4=XInputGetCapabilities, 5=XInputEnable`, so the game
-reads pad *state* through `XInputGetState` and uses `XInputSetState` for
-rumble. DirectInput 8 is imported too, but only `DirectInput8Create`, and it
-is used for the mouse and the keyboard. The user index is a per-object field
-(`[this+0x10]`), not a constant.
+All of these exist in the shipped build, and all of them belong to Raid Mode /
+the network layer that Raid Mode uses:
 
-**The two game-system instances both exist from start-up.** The instances
-live at `(&DAT_0116a344)[index]`, and there are exactly two slots — the
-constructor asserts `index < InstanceCount_` with `InstanceCount_ == 2`.
-The manager constructor creates one instance, which registers itself in slot 0
-and then creates a child, which registers itself in slot 1. So the co-op game
-system is already there when the title screen appears, and flipping the mode
-does **not** trip the `"false"` assertion in `FUN_0041a900`. The mod checks
-for the instance anyway before it writes the mode.
+* `game\scene_coop\...` — a parallel scene tree for every episode id
+  (`01`…`f1`), 81 `*_event.arc` files;
+* `scene_start_list_coop.ssl`, `coop_table\*.lvt`;
+* `_coop` variants of scene actors, swapped in by the scene loader
+  (`FUN_0041b710` at RVA `0x0001B710`);
+* `cCoopSyncData` and the per-object sync payloads (position, damage, item
+  pickup, doors, elevators, `uCoopChainLock`), `network::sNetworkManage`
+  (`DAT_01169398`), `nNetwork::Session`, `SteamNetworking005`;
+* a second game-system instance (`cGameSystemDouble`, `(&DAT_0116a344)[1]`),
+  read by `FUN_0041ba70` when the mode is `1`.
 
-**Tools and formats.** `.arc` is the MT Framework archive (`ARC\0`, u16
-version, 80-byte index entries, zlib payloads, type hash = CRC32 of the type
-name); `.ssl` is the scene start list; `.lvt` is a typed value table. All
-three were decoded and checked against the whole install (3,088 archives,
-66,203 entries, 188 tables, every one parsing to exactly its length).
+`FUN_0042bfc0` (RVA `0x0002BFC0`) does pick between
+`archive\game\{scene|scene_coop}\XX\XX_event` from the mode — that part of the
+old write-up is accurate. It is the Raid/co-op route of a mode that the game
+already ships and enters, not a hidden campaign route.
 
-### The network layer ships with the game
+### How this was measured
 
-This is the finding that changed the design of the project: there is no need
-to write a netcode. The shipped binary contains
+No memory pokes: the game was driven through its own menus with injected keys
+(arrows need `KEYEVENTF_EXTENDEDKEY`), the screen was read back with OCR, and
+the probe read the mode from process memory. The menu contents above are what
+the game renders, not what the executable seems to imply.
 
-* `network::sNetworkManage` — the netcode singleton (global `DAT_01169398`,
-  RVA `0x0D69398`, constructor `FUN_00880f10`) with `isHost()`, a play mode
-  at `+0xF4` and a player index at `+0xF8`;
-* `network::sCoopManager` with the nested classes `cStageInfo`, `cCoopSkill`
-  and `cSaveProc`;
-* `cCoopSyncData` — the **complete campaign sync vocabulary**, and every
-  message has a host-authoritative reply (`cRe…` twin): `cModifyStage`
-  (which episode the partner is in), `cModifyChara`, `cModifyEquip`,
-  `cModifyColor`, `cModifyMission`, `cUnlockStage`, `cPresence`, `cKick`,
-  `cReadyOn`/`cReadyOff`, `cCutStart`/`cCutEnd`, `cArrangeEnd`, `cContinue`,
-  the `cRush*` family, `cResult`, `cDeathEnemy`, `cNetworkDead`, …;
-* per-object sync payloads for everything that has to agree between two
-  players: position and damage (`uCharaBase`), item drop and pickup
-  (`sItem`, `uItem`), explosion and shoot-down (`uWeapon`), the two-player
-  door (`uDoor2pBase`), the elevator (`uElevatorBase`), the co-op chain lock
-  (a **host check / host answer** pair on `uCoopChainLock`), the action
-  command mediator and the cutscene arrangement state;
-* a session layer (`nNetwork::Session`, `SessionDriver`, `SessionDatabase`,
-  `Route`, `Transport`), `SteamNetworking005` and `WS2_32.dll`;
-* a co-op lobby: `cCoopMenu` with the states `cRaidMenuState`, `cQuickConfig`,
-  `cPlayerMatch`, `cCreateConfig`, `cCustomMatch`, `cSessionList`,
-  `cLobbyBase`, `cLobby`, `cWaitOtherReady`, `cCreateSession`,
-  `cSearchSession`, `cShortCutMoving`, `cEndErrorJump`.
+### A pointer trap worth knowing
 
-`FUN_007cb7b0` (`cCoopMenuState.cpp`) reads the play mode out of the menu
-object (`menu + 0x408`) and writes the result into the network manager:
-`0` is `network::PlayMode::None` (leave the menu), and the two non-`None`
-values take a co-op path — the second one additionally sets the local player
-index to `0`. The two non-`None` values are not named anywhere in the
-strings; Raid and campaign co-op are the obvious candidates, but that is not
-proven.
-
-So the mod's remaining work is **not** "write a netcode" but:
-
-1. the mode gate (done),
-2. a way into the co-op lobby — the PC interface exposes only Raid
-   matchmaking, so the co-op states have to be reachable somehow,
-3. reuse the game's own session and transport.
+The globals at `0x0D69108`, `0x0D69398`, `0x0D6A344` live in the image, but the
+objects they point to live on the heap (`0x220A…`). A guard that accepts only
+image addresses silently rejects every game object. That bug made `re1coop`
+report `mode=-1` for the life of the project, and made its mode write a no-op.
 
 ## What we changed
 
-Nothing in the game yet — the game has never been run with the mod. The work
-so far is the reverse engineering above plus the first slices of the mod:
-
-1. **The co-op mode override.** A detour around the two loaders writes `1`
-   into the mode field before and after the original call, and a watcher
-   thread re-asserts it while an episode runs. The mode is only written once
-   the game data pointer is inside the game image, and Raid mode is never
-   touched.
-2. **Guarded patching.** Both loaders are found by byte signature and the
-   patch is refused unless the signature matches exactly once *and* the found
-   address equals the expected RVA. The 6-byte prologue the hook overwrites
-   is *not* unique on its own (11 and 2 matches), which is why the check
-   exists.
-3. **A guard on the mode write.** The game reads the co-op game-system
-   instance (slot 1) when the mode is co-op and asserts `"false"` when that
-   slot is empty. The mod therefore only writes the mode once it can see the
-   instance, and says so in the log instead of writing. The check is
-   redundant for this build — both slots exist from start-up — but the mod
-   must not depend on that.
-4. **The pad probe.** `XInputGetState` is hooked through the game's import
-   address table and reports which user index the game polls. This is the
-   measurement that decides the rest of the design: if the game polls index 1
-   in co-op mode, player 2 is a second local pad and the online half only has
-   to replicate state; if it does not, the mod has to synthesise player 2's
-   input. The same hook is where remote input will be injected.
-5. **The co-op state probe.** A read-only probe of the co-op globals: the
-   game mode, the two game-system instances, and the network manager with its
-   play mode, player index and flag bits. It logs a line whenever one of
-   them changes:
-
-   ```
-   coop state: mode=1 instances=2/2 coop_instance=1 net=playmode=-1 player=-2 flags=00000000 session=0 state=0 status=0
-   ```
-
-   `playmode` stays `-1` while the network manager has never started a
-   session and `player` is `-2` before the manager exists. If the mode flip
-   alone moves `playmode` away from `-1`, the game starts a session by itself
-   and the only missing piece is the menu entry; if it does not, the mod has
-   to wake the netcode up. One run answers that.
-6. **The proxy was fixed so the game can load it at all.** The first launch
-   attempt failed with `The procedure entry point DirectInput8Create could not
-   be located in the dynamic link library …\rerev.exe`. The proxy exported the
-   MSVC-decorated name `_DirectInput8Create@20`; the game imports the
-   undecorated `DirectInput8Create`. A `.def` file now pins the export, and a
-   test resolves the export by name so the regression cannot come back — see
-   the [export fix](#the-proxy-export-fix) below.
-
-The mod lives in its own repository, `re1coop`, and is not published yet.
-
-### The proxy export fix
-
-The game imports exactly one symbol from `DINPUT8.dll` — `DirectInput8Create` —
-by its undecorated name. MSVC exports `__stdcall` functions decorated
-(`_DirectInput8Create@20`) unless a module-definition file says otherwise, so
-the first built proxy could not satisfy the import and the game refused to
-start. Searching the DLL for the *string* `DirectInput8Create` said "found" and
-was useless; only the **export name table** shows the decoration.
-
-`dinput8.def` now pins the five exports to their undecorated names:
-
-```
-LIBRARY dinput8
-EXPORTS
-    DirectInput8Create
-```
-
-and `tests/export_check.cpp` loads the built DLL and calls
-`GetProcAddress(module, "DirectInput8Create")`, which is exactly what the
-game's import binder does.
-
-**This applies to any proxy of a system DLL for this game**, not only ours: a
-proxy that builds cleanly but makes the game report a missing entry point
-almost certainly has this problem. Check the export name table
-(`dumpbin /exports <dll>`), not the presence of the string.
+* **`re1coop`: the mode probe never worked.** `currentGameData()` /
+  `currentMode()` rejected heap pointers with an image-range test. Replaced with
+  `readableMemory()` (`VirtualQuery` → committed, not `PAGE_NOACCESS` /
+  `PAGE_GUARD`). The probe now reports `0` at the menus and `1` in Raid Mode.
+  Unit tests cover the helpers; the value was confirmed in a running game.
+* **`re1coop`: the mode override is disabled.** Writing `1` into a campaign
+  would point the engine at Raid scene data for a campaign chapter. The
+  function logs once and returns `false`. The enum/comments that claimed
+  `1 = co-op`, `2 = raid` are corrected.
+* **Two start-up crashes fixed earlier** (kept, tested): linking the proxy
+  without `/guard:cf` leaves an empty CFG valid-target table (`0xc0000409`
+  at start-up); using the CRT stream layer inside the DLL makes a narrow
+  `fprintf` on a wide stream raise an invalid parameter, which the same CFG
+  gap turns into the same fast-fail. The logger uses `CreateFileW`/`WriteFile`.
+  `tests/load_config_check.cpp` and `tests/log_test.cpp` catch both.
 
 ## QA
 
-```
-cd <mod repo>
-build.bat
-```
-
-which runs CMake + Ninja and then `ctest`. Last result, 2026-10-22:
-
-```
-    Start 1: hook_test ........................   Passed    0.01 sec
-    Start 2: iat_test .........................   Passed    0.01 sec
-    Start 3: coop_mode_test ...................   Passed    0.01 sec
-    Start 4: pad_probe_test ...................   Passed    0.01 sec
-    Start 5: coop_state_test ..................   Passed    0.01 sec
-    Start 6: export_check .....................   Passed    0.12 sec
-
-100% tests passed, 0 tests failed out of 6
-```
-
-These are host-side tests: the hook framework, the IAT patcher, the mode
-field offsets and helpers, the uniqueness of both loader signatures, the
-`XINPUT_STATE` layout the pad probe depends on, the co-op state helpers
-(the instance slots, the network manager field offsets and the log format),
-and the proxy's export table (`export_check` resolves `DirectInput8Create`
-by name the way the game's loader does).
-**No test starts the game**, so the QA level of this write-up is `none`.
+- `build.bat` in the `re1coop` repo: configure, build, `ctest`.
+- Last suite result: **8/8 passed**, 2026-10-22.
+- In-game: repeated sessions reached the main menu and Raid Mode and played;
+  `re1coop.log` showed `mode=0` → `mode=1` on entering Raid Mode; the game's
+  save file was byte-identical (SHA-256) before and after every run.
+- QA level stays `none`: there is no co-op feature to test.
 
 ## How to play
 
-Not yet. The mod is not published and there is no release, no installer and
-no way to join a friend's session.
+There is nothing to install for co-op in the campaign; it does not exist.
+Raid Mode co-op is the game's own, over Steam, unchanged.
+
+`re1coop` can be built and dropped in as a diagnostic (`dinput8.dll` +
+`re1coop.ini`), but it changes no gameplay.
 
 ## Known issues
 
-- **The save slot.** Forcing co-op switches the game to a different save slot.
-  On a fresh save that slot is empty, so a co-op session starts with no
-  campaign progress and writing to it does not touch the campaign save.
-- **The co-op campaign has never been launched.** The override is verified
-  statically only. One launch attempt was made; it stopped at the loader with
-  a missing `DirectInput8Create` export, which is now fixed, but the game has
-  not been started since.
-- **There is no way to start a co-op session.** The game has the netcode and
-  the lobby states, but the PC interface only offers Raid matchmaking, so the
-  co-op menu entry has to be found and re-added first.
-- **No second player input source yet.** The pad probe knows which XInput user
-  index the game polls, but nothing feeds a second player.
-- **The mod ships as a proxy `dinput8.dll`**, which collides with any other
-  mod that owns that name.
+- The mod's readme and earlier hub notes described a "dormant campaign co-op";
+  those claims are withdrawn here and in the mod's own README.
+- The old theory's origin is not fully traced: `scene_coop` asset names match
+  campaign episode ids, which is probably what made the inference look safe.
+  The runtime measurement overrides the inference.
 
 ## Next steps
 
-1. **Run the game with `coop_mode = 1`, `coop_state = 1` and
-   `pad_probe = 1`.** That single run answers the open questions at once: does
-   the co-op campaign load, is a second player created, is a second pad
-   polled, and does the network manager ever leave `PlayMode::None`.
-2. **Find the missing menu entry.** Which function builds the "Online" entry
-   and why does it only offer Raid? The co-op lobby states are already in the
-   binary.
-3. **Mirror or share the save slot** between campaign and co-op, otherwise
-   every co-op session starts blind.
-4. **Decide the input path** from the probe result: a second local pad (then
-   only state has to be replicated) or a synthesised second pad (then the
-   network has to carry the input).
-5. **Point the co-op path at the game's own session layer** instead of
-   shipping a new transport. The `nNetwork::Session*` stack and the
-   `cCoopSyncData` vocabulary are already there; what is not settled is
-   whether a session can be created without the Steam matchmaking that the
-   PC UI drives.
+Two honest options for the next agent:
 
-The working notes, with every evidence trail and the list of things that are
-still unknown, are in [NOTES.md](NOTES.md).
+1. **Stop.** The campaign has no co-op to unlock, and adding one would mean
+   writing a new mode (actors, spawn, camera, save, cutscenes) on top of a
+   single-player campaign — a ground-up mod, not an unlock.
+2. **Raid Mode quality of life.** The game has working two-player Raid Mode
+   over Steam. The open question is whether two players can be brought together
+   without Steam matchmaking (direct IP / relay) by working on
+   `network::sNetworkManage`, `nNetwork::Session` and `SteamNetworking005`.
+   That is a different project from the one this folder started.
+
+Do not re-run the "flip the mode" experiment expecting a different result;
+the measurement above is reproducible and the mode field is read, not guessed.

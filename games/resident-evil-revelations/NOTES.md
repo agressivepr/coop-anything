@@ -830,3 +830,354 @@ start with an entry-point error, check the **export name table**, not the
 presence of the string. `dumpbin /exports <dll>` (or the PE reader above) shows
 the decoration directly.
 
+## Fifth session: the proxy crashed the game (two independent defects)
+
+With the export name fixed, the loader bound the import and the game reached
+`DirectInput8Create` — and then died with a fast-fail, every single time:
+
+```
+Application Error
+  Faulting application: rerev.exe          (PE timestamp 0x65a78e7e)
+  Faulting module:    DINPUT8.dll          (PE timestamp 0x6ad9aa84)
+  Exception code:     0xc0000409
+  Fault offset:       0x0000f5ce
+```
+
+`0xc0000409` is `STATUS_STACK_BUFFER_OVERRUN`, which on modern Windows is what
+`__fastfail` raises. The disassembly of the failing routine (Ghidra, project
+`re1coop`) shows the classic fast-fail stub:
+
+```
+push 0x17            ; IsProcessorFeaturePresent
+call [IsProcessorFeaturePresent]
+push 5               ; FAST_FAIL_GUARD_ICALL_CHECK_FAILURE
+pop  ecx
+int 0x29
+```
+
+`ecx = 5` is `FAST_FAIL_GUARD_ICALL_CHECK_FAILURE`, i.e. **a Control Flow Guard
+check rejected an indirect call**. Two separate defects were behind it, and
+both had to be fixed.
+
+### Defect 1: the proxy was a broken CFG image
+
+**Observed** (parse of the load config of the built DLL, x86 layout:
+`SEHandlerTable` +0x40, `SEHandlerCount` +0x44, `GuardCFCheckFunctionPointer`
++0x48, `GuardCFDispatchFunctionPointer` +0x4C, `GuardCFFunctionTable` +0x50,
+`GuardCFFunctionCount` +0x54, `GuardFlags` +0x58):
+
+```
+load config: rva=0x360b8 size=0x40
+  GuardCFCheckFunctionPointer    +0x48 = 0x1002b184
+  GuardCFFunctionTable           +0x50 = 0x1002b1f4
+  GuardCFFunctionCount           +0x54 = 0x000000b7
+  GuardFlags                     +0x58 = 0x10017500
+```
+
+The interesting part is what happened *before* the fix: the linker still set
+`IMAGE_GUARD_CF_INSTRUMENTED` in `GuardFlags` (`0x100`), but dropped the
+`.gfids` data, so the image ended up with
+
+```
+  GuardCFFunctionTable           +0x50 = 0x00000000
+  GuardCFFunctionCount           +0x54 = 0x00000000
+```
+
+— an **empty valid-target table** on an image that claims to be instrumented.
+Every guard check that resolved a target inside the DLL then failed, and the
+process died before the first window appeared.
+
+**Why the linker did that:** the static MSVC CRT (`libcmt.lib`) ships
+pre-compiled with `/guard:cf`. It carries 50 `.gfids` entries and 26
+references to `__guard_check_icall_fptr`. Linking those objects *without*
+`/guard:cf` on the link line produces exactly the broken image above.
+
+**The fix** is one link option:
+
+```cmake
+target_link_options(dinput8 PRIVATE "/guard:cf")
+```
+
+After it, the load config of the proxy reads `GuardCFFunctionTable = 0x1002b1f4`,
+`GuardCFFunctionCount = 0xb7`, `GuardFlags = 0x10017500` — a consistent image.
+
+Note for the reader: MSVC's x86 linker always writes `0x40` into the load
+config **data-directory** size while the structure's own `Size` field says
+`0xc0`. The directory size is therefore useless for validating a CFG image;
+the structure's internal `Size` is the field to check.
+
+### Defect 2: the logger used the CRT stream layer
+
+With the CFG table populated the crash moved, but it did not go away: the fault
+offset changed (`0x0000f5ce` → `0x0000f66e`) and the exception code stayed
+`0xc0000409`.
+
+**Observed:** the log file the proxy wrote was exactly **3 bytes** long — the
+UTF-8 BOM that `_wfopen_s` writes when it opens a stream with `ccs=UTF-8`.
+Nothing else ever reached the file, so the crash happened between the open and
+the first `fprintf`.
+
+**Root cause** (standalone repro in `iop_test.c`, six variants, built with
+`/guard:cf` and a custom invalid-parameter handler so the CRT reports instead
+of aborting):
+
+```
+variant 1: _wfopen_s + fflush + fclose        -> fine
+variant 2: + fprintf("... %ls ...")           -> INVALID PARAMETER
+variant 3: + fprintf("... %s ...")            -> INVALID PARAMETER
+variant 4: + setvbuf(_IOLBF)                  -> fine
+variant 5: + setvbuf(_IOFBF)                  -> fine
+variant 6: + _snwprintf_s                     -> fine
+```
+
+So it is not the format string and **not** `setvbuf` (the `_IOLBF` value is
+accepted by this CRT — that hypothesis was wrong and was dropped). It is
+`fprintf` itself: `_wfopen_s` returns a **wide-oriented** stream, and a narrow
+`fprintf` on it makes the CRT raise an invalid parameter.
+
+And *that* is fatal here, because the CRT reports an invalid parameter by
+calling through a function pointer — and that pointer is not a legal CFG
+target in this legacy, non-CFG host process. The report therefore ends in
+`__fastfail(FAST_FAIL_GUARD_ICALL_CHECK_FAILURE)` → `int 0x29` →
+`0xc0000409`. The Ghidra decompile of the failing CRT helper shows it
+literally:
+
+```
+esi = *(code **)(obj + 0x35c);
+mov  ecx, esi;
+call dword ptr [PTR_guard_check_icall_1002c184];
+call esi;
+```
+
+**The fix:** the logger no longer uses the CRT stream layer at all. It opens
+the file with `CreateFileW` and writes with `WriteFile`; only the *formatting*
+still uses the CRT (`_vsnprintf_s`), which is pure string building and has no
+invalid-parameter behaviour of its own.
+
+```cpp
+g_file = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                     nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+```
+
+This also removed the awkward wide/narrow mix (`%ls` in a narrow `fprintf`)
+that the old code had.
+
+### The regression tests
+
+Two ctest targets were added, so neither defect can come back unnoticed:
+
+- `tests/log_test.cpp` — writes a real log line with the production logger and
+  reads the file back, checking the banner and the formatted line.
+- `tests/load_config_check.cpp` — parses the built proxy's load config and
+  fails when the image claims to be CFG instrumented but carries an empty
+  valid-target table (the defect-1 shape).
+
+```
+    Start 1: hook_test
+1/8 Test #1: hook_test ........................   Passed    0.01 sec
+    Start 2: iat_test
+2/8 Test #2: iat_test .........................   Passed    0.01 sec
+    Start 3: coop_mode_test
+3/8 Test #3: coop_mode_test ...................   Passed    0.01 sec
+    Start 4: pad_probe_test
+4/8 Test #4: pad_probe_test ...................   Passed    0.01 sec
+    Start 5: coop_state_test
+5/8 Test #5: coop_state_test ..................   Passed    0.01 sec
+    Start 6: export_check
+6/8 Test #6: export_check .....................   Passed    0.11 sec
+    Start 7: log_test
+7/8 Test #7: log_test .........................   Passed    0.14 sec
+    Start 8: load_config_check
+8/8 Test #8: load_config_check ................   Passed    0.12 sec
+
+100% tests passed, 0 tests failed out of 8
+```
+
+The `export_check` test used to be flaky (~3 crashes in 30 runs, always
+`0xc0000409`): the proxy's init thread called `fprintf` while the test binary
+was already tearing down. After the logger rewrite, 40 consecutive runs with
+zero crashes.
+
+### The game still would not start: the Steam app id
+
+With the crash gone, the game started, initialised the mod completely and then
+**exited after half a second, without creating a window**.
+
+**Observed** (control experiment, same folder, same command, twice):
+
+```
+RUN A: baseline, no mod DLL  -> PROCESS EXITED (0.5 s, no window)
+RUN B: with the fixed mod DLL -> PROCESS EXITED (0.5 s, no window)
+```
+
+The exit is the game's own behaviour when it is launched directly, **with or
+without the mod** — it is not caused by the mod. The game is a Steam title and
+its Steam API needs the app id; when the process is started outside the Steam
+client the API init fails and the game quits.
+
+**The fix for a direct launch:** a `steam_appid.txt` file containing the app id
+next to the executable:
+
+```
+222480
+```
+
+With that file present, the same command that produced a 0.5-second exit now
+produces a running game:
+
+```
+window: visible=True  class=B title=R
+window: visible=False class=I title=D
+window: visible=False class=M title=M
+window: visible=True  class=D title=D
+STILL RUNNING pid=9844 ws=172.5MB responding=True
+```
+
+Launching through Steam needs no such file — the Steam client exports
+`SteamAppId` into the game process itself.
+
+### The game with the mod, running
+
+The full soak run (90 s) on the test copy, mod loaded, no crash:
+
+```
+launched pid=9072 at 15:32:20
+STILL RUNNING after 90 s: pid=9072 ws=314.7MB responding=True
+```
+
+and the mod's log:
+
+```
+---- re1coop start ----
+re1coop loaded in pid 9072 (enabled=1 role=auto host=127.0.0.1 port=21500)
+coop mode: game image at 00400000, size 00e1a000, entry 00df0310
+coop state: instances at 0116a344, scenes at 0117cc90, network manager at 01169398
+coop mode: hooked the episode loader at 0042bfc0
+coop mode: hooked the scene loader at 0041b710
+coop mode: watcher started (always=0 hold=1 poll=250ms)
+pad probe: XInputGetState hooked at 019D2850 (ordinal 2 of xinput1_3.dll)
+coop state: sampler started (poll=500ms)
+coop state: mode=-1 instances=0/2 coop_instance=0 net=playmode=-2 player=-2 flags=00000000 session=0 state=0 status=-2
+coop state: mode=-1 instances=2/2 coop_instance=1 net=playmode=-2 player=-2 flags=00000000 session=0 state=0 status=-2
+```
+
+So the game boots, both game-system instances come up, and the state probe
+sees the co-op instance become active. The netcode is still idle
+(`playmode=-2`, `session=0`), which is correct for a game sitting on its
+title screen.
+
+### Still open after this session
+
+- the co-op path itself is still unverified: no session has been established
+  yet, so the second player is never created, XInput index 1 is never polled
+  and the menu entry is still missing;
+- `steam_appid.txt` is a **direct-launch** convenience. For the owner's Steam
+  install the game has to be started from Steam, and the two mod files have to
+  be copied next to `rerev.exe` by the owner;
+- a copy of the *first*, crashing proxy DLL is still in the owner's Steam
+  install (`DINPUT8.dll`, PE timestamp `0x6ad9aa84`). Steam launching that copy
+  crashes with `0xc0000409` at fault offset `0x0000f5ce`. Removing it restores
+  the install — it did not ship with the game.
+
+### Note for anyone else proxying a system DLL on a legacy x86 game
+
+Two traps, both of them silent and both fatal, and neither visible in the
+build output:
+
+1. **link the proxy with `/guard:cf`** if any statically linked CRT is
+   CFG-instrumented. Without it the image is marked instrumented with an empty
+   valid-target table and every indirect call inside the DLL is rejected.
+2. **do not mix the CRT stream orientations.** A narrow `fprintf` on a stream
+   from `_wfopen_s` raises an invalid parameter, and reporting an invalid
+   parameter is itself an indirect call that a non-CFG host cannot validate.
+   Use the Win32 file API inside the injected DLL and keep the CRT for string
+   building only.
+
+Both traps are covered by ctest targets now, so a repeat is a red test rather
+than a dead game.
+
+
+---
+
+## Session 6: the premise is dead — this game has no campaign co-op
+
+**Correction. Everything above that describes a "dormant two-player campaign
+behind a mode switch" is wrong.** It was an inference from decompiled
+branches and asset names, never checked against the running game. This
+session checked it, by playing the game and reading its memory.
+
+### Evidence, in order of decisiveness
+
+1. **The main menu has exactly three entries.** Driven with injected keys and
+   read back with OCR: `КАМПАНИЯ`, `РЕЖИМ «РЕЙД»`, `ПАРАМЕТРЫ`, and the
+   selection wraps after three `DOWN` presses. There is no co-op entry. The
+   description shown for `РЕЖИМ «РЕЙД»` is literally "Режим совместного
+   прохождения, в котором вы боретесь с врагами разной сложности." — the
+   shipped co-op mode is Raid Mode.
+2. **The campaign pause menu has no invite path:** `ЗАГРУЗКА`,
+   `ПАРАМЕТРЫ`, `ВЫЙТИ`.
+3. **The mode field reads `1` while Raid Mode runs.** Measured with the
+   `re1coop` probe (after fixing the bug below) at the menus and in Raid Mode:
+
+   ```
+   coop state: mode=0 instances=2/2 coop_instance=1 net=playmode=-1 player=-1 ...
+   coop state: mode=1 instances=2/2 coop_instance=1 net=playmode=-1 ...   <- Raid lobby
+   coop state: mode=1 instances=2/2 coop_instance=1 net=playmode=0  ...   <- Raid lobby
+   ```
+
+   So `0` = campaign/neutral, `1` = Raid Mode. The old enum
+   (`1 = co-op`, `2 = raid`) is wrong. No other value was observed.
+
+### The bug that hid all of this
+
+`coop_mode.cpp::currentGameData()` and `coop_state.cpp::currentMode()`
+walked the chain correctly and then rejected the result with an
+image-range test. The globals are in the image; the objects are on the heap:
+
+```
+[0x01169108] = 0x220A6460        (sGameSystems, heap)
+0x220A6460 + 0x24 -> 0x220A6570  (game data, heap)
+0x220A6570 + 0x20 -> 1           (the mode, while Raid Mode is running)
+```
+
+Consequence: `mode=-1` in every log was the mod failing to look, not the game
+"not having picked a mode yet", and the mode write **never executed** — the
+"override" was a no-op for the whole project. Pointer validity is now
+`readableMemory()` (`VirtualQuery` → committed, not `PAGE_NOACCESS`/`PAGE_GUARD`).
+
+### What changed in the mod
+
+* pointer checks use readability, not image range (mode is now readable:
+  `0` at menus, `1` in Raid Mode; confirmed in a live game);
+* `forceCoopMode()` is a deliberate no-op with a log line: writing `1` into a
+  campaign would send the engine to Raid scene data for a campaign chapter;
+* `layout.h` enum corrected to `kModeCampaign = 0`, `kModeRaid = 1`, and all
+  comments that asserted a dormant campaign co-op rewritten;
+* `coop_mode` in the `.ini` now only enables the (read-only) probe;
+* README rewritten to state the result instead of the hypothesis;
+* `ctest`: 8/8 passing; game boots, reaches Raid Mode, plays, and the owner's
+  save file is byte-identical (SHA-256) before and after.
+
+### Root cause of the wrong turn (for the playbook)
+
+`game\scene_coop\` mirrors campaign episode ids (`01`…`f1`), and the binary
+really does branch on the mode in dozens of places, including functions that
+swap `_coop` actors. From static analysis alone that looks exactly like a
+disabled campaign mode. It is not: those ids are the stage ids Raid Mode uses,
+and the mode branch is the one the game takes *today* when you play Raid Mode.
+An asset route existing proves the route is used, not that it is dormant.
+
+**Rule to carry forward: before a "there is a hidden mode behind one field"
+hypothesis gets a mod, drive the game's own UI and read the field while the
+game is running. Both checks cost about an hour; this hypothesis cost five
+sessions.**
+
+### Still open (needs the owner)
+
+* publish or not: nothing has been pushed for RE1 since the premise died;
+* the stale crashing `DINPUT8.dll` is still in the owner's Steam install
+  (`<game dir>\DINPUT8.dll`, PE timestamp `0x6ad9aa84`) and should be deleted
+  by the owner;
+* direction: stop, or pivot to Raid Mode co-op QoL (the game's online Raid
+  Mode already works; the open question is direct-IP/relay instead of Steam
+  matchmaking).
