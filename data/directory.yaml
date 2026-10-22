@@ -3225,7 +3225,9 @@
     mode does not trip the game's "false" assertion. Pad state is read through XInput (ordinal 2 = XInputGetState
     in the shipped xinput1_3.dll), not DirectInput. Work in progress is a proxy dinput8.dll that flips the mode
     and probes the pad input and the co-op state; it is unpublished and the co-op campaign has never been
-    launched.
+    launched. Note for anyone proxying a system DLL here - the game imports the undecorated name
+    DirectInput8Create, so MSVC's decorated __stdcall export (_DirectInput8Create@20) makes the game fail at
+    start-up with a missing-entry-point error; pin the export with a .def file.
   sources:
   - https://store.steampowered.com/app/222480/Resident_Evil_Revelations/
   - https://steamcommunity.com/app/222480/discussions/

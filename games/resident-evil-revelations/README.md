@@ -188,8 +188,41 @@ so far is the reverse engineering above plus the first slices of the mod:
    alone moves `playmode` away from `-1`, the game starts a session by itself
    and the only missing piece is the menu entry; if it does not, the mod has
    to wake the netcode up. One run answers that.
+6. **The proxy was fixed so the game can load it at all.** The first launch
+   attempt failed with `The procedure entry point DirectInput8Create could not
+   be located in the dynamic link library …\rerev.exe`. The proxy exported the
+   MSVC-decorated name `_DirectInput8Create@20`; the game imports the
+   undecorated `DirectInput8Create`. A `.def` file now pins the export, and a
+   test resolves the export by name so the regression cannot come back — see
+   the [export fix](#the-proxy-export-fix) below.
 
 The mod lives in its own repository, `re1coop`, and is not published yet.
+
+### The proxy export fix
+
+The game imports exactly one symbol from `DINPUT8.dll` — `DirectInput8Create` —
+by its undecorated name. MSVC exports `__stdcall` functions decorated
+(`_DirectInput8Create@20`) unless a module-definition file says otherwise, so
+the first built proxy could not satisfy the import and the game refused to
+start. Searching the DLL for the *string* `DirectInput8Create` said "found" and
+was useless; only the **export name table** shows the decoration.
+
+`dinput8.def` now pins the five exports to their undecorated names:
+
+```
+LIBRARY dinput8
+EXPORTS
+    DirectInput8Create
+```
+
+and `tests/export_check.cpp` loads the built DLL and calls
+`GetProcAddress(module, "DirectInput8Create")`, which is exactly what the
+game's import binder does.
+
+**This applies to any proxy of a system DLL for this game**, not only ours: a
+proxy that builds cleanly but makes the game report a missing entry point
+almost certainly has this problem. Check the export name table
+(`dumpbin /exports <dll>`), not the presence of the string.
 
 ## QA
 
@@ -201,19 +234,22 @@ build.bat
 which runs CMake + Ninja and then `ctest`. Last result, 2026-10-22:
 
 ```
-    Start 1: hook_test ........................   Passed    0.14 sec
-    Start 2: iat_test .........................   Passed    0.13 sec
-    Start 3: coop_mode_test ...................   Passed    0.13 sec
-    Start 4: pad_probe_test ...................   Passed    0.12 sec
-    Start 5: coop_state_test ..................   Passed    0.13 sec
+    Start 1: hook_test ........................   Passed    0.01 sec
+    Start 2: iat_test .........................   Passed    0.01 sec
+    Start 3: coop_mode_test ...................   Passed    0.01 sec
+    Start 4: pad_probe_test ...................   Passed    0.01 sec
+    Start 5: coop_state_test ..................   Passed    0.01 sec
+    Start 6: export_check .....................   Passed    0.12 sec
 
-100% tests passed, 0 tests failed out of 5
+100% tests passed, 0 tests failed out of 6
 ```
 
 These are host-side tests: the hook framework, the IAT patcher, the mode
 field offsets and helpers, the uniqueness of both loader signatures, the
-`XINPUT_STATE` layout the pad probe depends on, and the co-op state helpers
-(the instance slots, the network manager field offsets and the log format).
+`XINPUT_STATE` layout the pad probe depends on, the co-op state helpers
+(the instance slots, the network manager field offsets and the log format),
+and the proxy's export table (`export_check` resolves `DirectInput8Create`
+by name the way the game's loader does).
 **No test starts the game**, so the QA level of this write-up is `none`.
 
 ## How to play
@@ -227,7 +263,9 @@ no way to join a friend's session.
   On a fresh save that slot is empty, so a co-op session starts with no
   campaign progress and writing to it does not touch the campaign save.
 - **The co-op campaign has never been launched.** The override is verified
-  statically only.
+  statically only. One launch attempt was made; it stopped at the loader with
+  a missing `DirectInput8Create` export, which is now fixed, but the game has
+  not been started since.
 - **There is no way to start a co-op session.** The game has the netcode and
   the lobby states, but the PC interface only offers Raid matchmaking, so the
   co-op menu entry has to be found and re-added first.

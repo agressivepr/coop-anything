@@ -750,3 +750,83 @@ prove: that the game reacts to the mode flip. That needs the game.
 - the save-slot question (slot 0 vs slot 1) is still open and only shows up
   in a real run.
 
+## Fourth session: the proxy DLL did not export the name the game imports
+
+The first launch attempt of the test copy failed before the game window
+appeared, with a loader error box:
+
+```
+rerev.exe - Entry Point Not Found
+The procedure entry point DirectInput8Create could not be located in the
+dynamic link library D:\...\rev1\rerev.exe.
+```
+
+### What it was
+
+**Observed** (parsed the export directory of the built proxy with a small
+PE reader, `_exports.py` in the mod repo during the session):
+
+```
+exports: [('_DirectInput8Create@20', 1), ('_DllCanUnloadNow@0', 2),
+          ('_DllGetClassObject@12', 3), ('_DllRegisterServer@0', 4),
+          ('_DllUnregisterServer@5', 5)]
+```
+
+The proxy exported `_DirectInput8Create@20` — the MSVC **decorated**
+`__stdcall` name — while the game's import table asks for the undecorated
+`DirectInput8Create` (confirmed in the first session: the game imports exactly
+one symbol from `DINPUT8.dll`, at RVA `0x0B1E202`). The loader could not bind
+the import, so it reported the entry point as missing *in the executable*
+(the loader names the module that has the unresolved import, not the DLL that
+failed to provide it — which is why the message points at `rerev.exe`).
+
+Note that the *string* `DirectInput8Create` was present in the built DLL the
+whole time; a plain `bytes.find()` check said "found" and told us nothing. Only
+reading the export **name table** shows the decoration. That is why the fix is
+checked by resolving the export, not by searching the file.
+
+### The fix
+
+A module-definition file pins the five exports to their undecorated names:
+
+```
+LIBRARY dinput8
+EXPORTS
+    DirectInput8Create
+```
+
+wired into CMake (MSVC only) with
+
+```cmake
+target_link_options(dinput8 PRIVATE "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/dinput8.def")
+```
+
+The export table now reads `DirectInput8Create` (ordinal 1), and the
+`dinput8.def` file is tracked in the mod repo.
+
+### The regression test
+
+`tests/export_check.cpp` loads the freshly built proxy and calls
+`GetProcAddress(module, "DirectInput8Create")` — exactly what the game's import
+binder does. It is a ctest target that depends on the DLL target, so a
+recurrence fails the build:
+
+```
+    Start 6: export_check
+6/6 Test #6: export_check .....................   Passed    0.12 sec
+
+100% tests passed, 0 tests failed out of 6
+```
+
+What it proves: the built DLL exports `DirectInput8Create` by name and the
+symbol resolves through the normal loader. What it does **not** prove: that the
+game starts with the proxy loaded — that still needs the game run.
+
+### Note for anyone else proxying a system DLL for this game
+
+The same trap applies to any `__stdcall` export (`DllGetClassObject`,
+`DllCanUnloadNow`, …). If a proxy for this game builds and the game refuses to
+start with an entry-point error, check the **export name table**, not the
+presence of the string. `dumpbin /exports <dll>` (or the PE reader above) shows
+the decoration directly.
+
