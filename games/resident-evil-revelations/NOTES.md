@@ -1181,3 +1181,411 @@ sessions.**
 * direction: stop, or pivot to Raid Mode co-op QoL (the game's online Raid
   Mode already works; the open question is direct-IP/relay instead of Steam
   matchmaking).
+
+## Seventh session: the type registry - the game's own replication extension point
+
+Session date: 2026-10-22. Goal for this session: the owner asked for a co-op
+mod for the **campaign**, built **from scratch**, on the **network code that
+already ships in the game**. The previous session had found the netcode but
+not the place where a mod can plug into it. This session found it, and proved
+it works in the running game.
+
+### The short version
+
+The game has a **type registry**: 4071 registered types in one tree, filled
+at start-up from static initialiser blocks, with inheritance, a hashed type
+id, and a class id that says how instances of the type are created and
+serialised. The game's own sync payloads (`cZZZSyncData`, `cMediateData`,
+`cPositionSyncData`, ...) are entries in that tree.
+
+**The mod can add its own entry to that tree, and the game treats it like one
+of its own.** This was verified in the running game, not inferred: the mod
+registered `re1coop::cCampaignSyncData` (32 bytes) under the game's own sync
+payload parent, and the game accepted it, gave it a type id, and the mod
+found it again by name.
+
+That is the extension point the whole mod is built on.
+
+### The registration function
+
+`FUN_008E1330`, `thiscall`, `ecx` = the descriptor:
+
+```
+FUN_008E1330(descriptor, name, parent, size, explicitId, flag29, flag23)
+```
+
+The game calls it from a static initialiser block of this shape (read out of
+`.text`, e.g. at `0x00F996BD`):
+
+```asm
+push 0                 ; flag23   (bit 23)
+push 0                 ; flag29   (bit 29)
+push 0                 ; explicit id -> 0 means "use the hash of the name"
+push 8                 ; size in bytes
+push 011E05C0          ; parent descriptor
+push 01090CDC          ; "cCoopSyncData::cZZZSyncData"
+mov  ecx, 011838F0     ; the descriptor of this type
+call 008E1330
+push 00FB7CF0          ; a destructor for the type
+mov  dword [011838F0], 01090104   ; the class vtable of this type
+call 00F29F91          ; _atexit(dtor)
+```
+
+### The descriptor layout
+
+Every registered type has a static object in `.bss`. The layout was read out
+of the shipped executable and cross-checked against the decompilation:
+
+```
++0x00  vtable           the concrete class vtable
++0x04  name             "cCoopSyncData::cZZZSyncData"
++0x08  next sibling
++0x0C  first child
++0x10  parent type
++0x14  next in the hash bucket
++0x18  size (low 23 bits) | class id (bits 23..28) | flag29 (bit 29)
++0x1C  type id = hash(name) & 0x7fffffff
+```
+
+Rules, all confirmed by the decompilation:
+
+* `FUN_008E1220` keeps the **children of a type sorted by name** (insertion
+  sort on the name at `+0x04`, sibling at `+0x08`);
+* `FUN_008E1300` **propagates the flag bits** from a type down to its
+  children (mask `0x1f800000`, i.e. bits 23..28);
+* `FUN_008E1660` is the **class-record lookup**:
+  `(&DAT_011859D0)[(desc[0x18] >> 23) & 0x3f]`. The 6-bit class id selects
+  one of 64 class records. **The class id is the memory domain the instances
+  live in** - the game uses it that way: `MtMemoryAllocator::GLOBAL` is class
+  1, `UI` is class 7, `UNIT` is class 12, `SOUND` is class 14, and the
+  network domain is **class 16**, which is where every sync payload lives
+  (corrected in the eighth session; the first reading said 0).
+
+### The tree, measured in the running game
+
+The root global at `0x0114D5CC` stays empty, so the mod finds the top of the
+tree by walking up from a descriptor it knows. The tree then reads:
+
+```
+net registry: 4071 types reachable from 'MtObject' (54 nNetwork::, 137 *SyncData, 14 cCoopMenu::)
+net registry:   root 'MtObject' size=4 class=0 id=2ea10ceb
+net registry:   child 'CoprocessorObject' size=2180 class=0 id=6d5941c5
+net registry:   child 'MtAllocator' size=92 class=0 id=5f813cb8
+net registry:   child 'MtMap' size=17424 class=3 id=29429698
+net registry:   child 'MtObject_Game<MtMemoryAllocator::NETWORK>' size=4 class=16 id=6fab1f0b
+net registry:   child 'MtObject_Game<MtMemoryAllocator::GLOBAL>' size=4 class=1 id=27b868ab
+net registry:   child 'MtObject_Game<MtMemoryAllocator::UI>' size=4 class=7 id=128bd5b3
+net registry:   child 'MtObject_Game<MtMemoryAllocator::UNIT>' size=4 class=12 id=11b1e319
+net registry:   child 'MtObject_Game<MtMemoryAllocator::SOUND>' size=4 class=14 id=100c91d8
+...
+```
+
+`MtObject` is the root of the MT Framework's own object hierarchy, and the
+network, AI, GUI and collision types all hang off it. This is the whole
+object model of the game, registered in one place.
+
+The types the mod cares about:
+
+```
+net registry: 'nNetwork::Session'          size=5072  class=16 parent='MtObject'
+net registry: 'nNetwork::SessionDatabase'  size=44424 class=16 parent='MtObject'
+net registry: 'nNetwork::SessionDriver'     size=1288  class=16 parent='MtObject'
+net registry: 'nNetwork::SessionListener'   size=4     class=16 parent='MtObject'
+net registry: 'cCoopSyncData::cZZZSyncData' size=8    class=16 parent='cRemoteCall'
+net registry: 'sActionCommand::cNetSyncData::cMediateData' size=12 class=16 parent='cRemoteCall'
+net registry: 'cCoopMenu::cLobby'           size=36    class=3 parent='cCoopMenu::cLobbyBase'
+```
+
+**Correction to the third session:** the parent of the per-object sync
+payloads is called **`cRemoteCall`**, not `cNetSyncData`. Its descriptor sits
+at `0x011E05C0` (RVA `0x00DE05C0`), size 8, class 16, type id `0x4cd24d24`.
+
+### The session API, decoded
+
+The type descriptors of the session classes, with their vtables:
+
+| type | descriptor | size | vtable |
+|---|---|---|---|
+| `nNetwork::Session` | `0x011E23DC` | 0x13D0 (5072) | `0x010D20B8` |
+| `nNetwork::SessionDatabase` | `0x011E0A14` | 0xAD88 (44424) | `0x010C6580` |
+| `nNetwork::SessionDriver` | `0x011E239C` | 0x508 (1288) | `0x010D1FA0` |
+| `nNetwork::SessionListener` | `0x011E23BC` | 4 | `0x010D2094` |
+
+The `nNetwork::Session` vtable is followed, in the same 16-byte-aligned
+region, by the strings
+
+```
+KSP3=PROTOCOLSYSTEM
+KPP3=PROTOCOL_COMM_ON
+```
+
+Those are the **Valve Source Engine** protocol identifiers
+(`PROTOCOL_SYSTEM` / `PROTOCOL_COMMON`). The game ships a Source-style
+netchannel stack on top of `ISteamNetworking` (SteamNetworking005), together
+with a full `WS2_32` client and server socket stack. Its constructor
+(`FUN_00BE2C30`) is a normal object constructor: it allocates through the
+class record's allocator, sets the instance vtable, and initialises the
+session's own state.
+
+The send path:
+
+```
+FUN_00882FD0(session, descriptor, size, flags)   // the game's own send
+    -> FUN_009D59C0()                            // lock
+    -> FUN_009CDE40(*(descriptor + 0x28), size, flags)
+         if (*(char *)(target + 0x14) && size)  // "connected" byte
+             FUN_00A11030(flags, 0xC0, flags2, size)
+    -> unlock
+
+FUN_00A11030(...)   // builds the packet: buffer of 0x800 bytes, serialises
+                    // the payload, then FUN_00BE2900 hands it to the channel
+```
+
+### The mod: milestone 1
+
+New module `src/game/net_registry.{h,cpp}` in the mod repo. It reads the
+game's registry, finds a type by name, and registers one type of the mod's
+own. New module `src/game/net_probe.{h,cpp}` drives it and samples the
+network manager. Nine ctest cases cover the helpers on a synthetic tree that
+has the same shape as the game's.
+
+The measured result in the running game:
+
+```
+net registry: register=008e1330 class-record=008e1660 root-slot=0114d5cc
+net registry: 4071 types reachable from 'MtObject' (54 nNetwork::, 137 *SyncData, 14 cCoopMenu::)
+net registry: the sync payload parent is 'cRemoteCall' (size=8 class=16 id=4cd24d24)
+net registry: registering 're1coop::cCampaignSyncData' with class=16
+net registry: registered 're1coop::cCampaignSyncData' size=32 class=16 id=57fe3c6a
+net registry: 're1coop::cCampaignSyncData' found at 68c0c1bc (id=57fe3c6a, parent='cRemoteCall')
+net registry: 're1coop::cCampaignSyncData' shares the class record of its parent at 058ceac0
+net registry: allocated an instance of 're1coop::cCampaignSyncData' at 215f8370
+net session: manager=21648f30 session=00000000 playmode=-1 player=-1 flags=00000000 status=0
+```
+
+The game booted, reached the main menu, kept running, and the owner's save
+file is byte-identical (SHA-256 `037EC948...EDC`) before and after.
+
+The last line is the second important measurement: **in the campaign the
+network manager exists but has no session** (`session=0`, `playmode=-1`).
+That is the gap the mod has to close.
+
+### The bug that crashed the game this session
+
+The proxy crashed with `0xc0000005` in `DINPUT8.dll`, fault offset
+`0x00017d90`, two seconds after launch. Cause: **a virtual address was
+converted to an RVA by hand and a hex digit was lost.**
+
+The game is loaded at `0x00400000` with no ASLR, so
+`rva = va - 0x00400000`. Written out:
+
+```
+0x011E05C0 -> 0x00DE05C0     not 0x000E05C0
+0x0114D5CC -> 0x00D4D5CC     not 0x0004D5CC
+0x011859D0 -> 0x00D859D0     not 0x000459D0
+```
+
+With the wrong RVA the mod read a *code* address as a type descriptor and
+then walked the pointers in it. The game died.
+
+Two fixes, both of them general and not about this one constant:
+
+1. **The registry walk validates every descriptor before it follows it.**
+   `validDescriptor()` checks that the descriptor is readable, that its name
+   pointer is readable byte by byte, and that the name is printable ASCII.
+   The walk also has a depth limit (32) and a node budget (4096), so a
+   half-initialised or corrupted registry cannot take the process down.
+   `safeTypeName()` is used wherever a name is printed.
+2. **The RVAs are written out in one place** (`net_registry.h`, namespace
+   `rva`), each with the virtual address in a comment, so they can be checked
+   against the binary by eye.
+
+**Rule to carry forward: an address in a mod must be derived, not typed.**
+Every constant is `va - 0x00400000`, written next to the virtual address it
+came from.
+
+### What this changes for the plan
+
+The plan is now concrete, in the mod repo's README:
+
+1. **a session in the campaign** - drive `nNetwork::SessionDriver` /
+   `nNetwork::Session` the way the Raid lobby does, but from the campaign.
+   Success criterion: `sNetworkManage` reports a live session while a
+   campaign chapter is running.
+2. **the partner player** - the game already replicates characters
+   (`uCharaBase::cNetSyncData::cPositionSyncData`, `cDamageSyncData`); in Raid
+   the second player is a second `uCharaBase` spawned by the co-op menu.
+3. **the campaign glue** - our own entry point, our own payload types
+   (registration is proven to work), and save ownership.
+
+Fallback if the campaign's character sync turns out to be gated on
+`mode == 1`: run the campaign chapters inside the shipped co-op engine, with
+the campaign's chapter selection feeding the co-op stage list. The netcode,
+the sync classes and the spawning are then entirely the shipped ones and only
+the flow is ours.
+
+### Still open after this session
+
+* the session creation path (`cCoopMenu::cCreateSession` / `cSearchSession`)
+  still has to be found and called from the campaign - this is the next
+  milestone;
+* the partner player's spawn path has to be found;
+* two-client verification needs a second Steam peer - **this needs the
+  owner's approval and has not been requested yet**;
+* nothing has been pushed to the hub for this session; the branch is
+  `game/resident-evil-revelations` and PR #126 is still a draft.
+
+## Eighth session: the right class, and the allocator that crashed on a wrong calling convention
+
+The seventh session ended with the mod's type registered, but with `class=0`.
+That was wrong, and it was wrong in a way that only matters later: the class
+id chooses the memory domain, and a type in the wrong class would have its
+instances allocated from the wrong heap. This session fixed it, decoded the
+allocation path, and got the game to hand out an instance of a type the mod
+registered itself.
+
+### The class id is 16, not 0
+
+`typeClass()` masked bits 23..29 instead of 23..28, and the earlier log was
+read as `class=0` for the network types. With the six-bit mask the real
+values are:
+
+```
+net registry:   child 'MtObject_Game<MtMemoryAllocator::NETWORK>' size=4 class=16
+net registry:   child 'MtObject_Game<MtMemoryAllocator::GLOBAL>'  size=4 class=1
+net registry:   child 'MtObject_Game<MtMemoryAllocator::UI>'      size=4 class=7
+net registry:   child 'MtObject_Game<MtMemoryAllocator::UNIT>'    size=4 class=12
+net registry:   child 'MtObject_Game<MtMemoryAllocator::SOUND>'   size=4 class=14
+net registry: 'nNetwork::Session'          size=5072  class=16 parent='MtObject'
+net registry: 'nNetwork::SessionDatabase'  size=44424 class=16 parent='MtObject'
+net registry: 'nNetwork::SessionDriver'    size=1288  class=16 parent='MtObject'
+net registry: 'nNetwork::SessionListener'  size=4     class=16 parent='MtObject'
+net registry: 'cRemoteCall'                size=8     class=16
+net registry: 'cCoopSyncData::cZZZSyncData' size=8    class=16 parent='cRemoteCall'
+```
+
+So **NETWORK = 16**, and every sync payload, `cRemoteCall` and the session
+classes live in it. The class ids are the `MtMemoryAllocator` domains, not
+arbitrary numbers.
+
+### The class is assigned at run time, not at registration
+
+Every registration block in the game pushes three zeroes before the size,
+the parent and the name:
+
+```
+6a 00 6a 00 6a 00   push 0   ; classId
+                    push 0   ; flag29
+                    push 0   ; explicitId
+push <size>; push <parent>; push <name>; mov ecx,<desc>; call 008E1330
+```
+
+`FUN_008E1330` writes bits 23..28 from the seventh argument, which is 0 at
+that point. The real class arrives later: `FUN_008E18D0` / `FUN_008E1990`
+walk the parent chain, call `ancestor->vtable[3](ancestor->name)` until one
+of them returns something other than `0x7fffffff`, and write that value into
+the child's bits 23..28. `FUN_008E1300` then propagates a type's class down
+to its children (mask `0x1f800000`).
+
+Consequence for the mod: a type registered from the proxy **after** that
+pass never gets a class unless it is passed explicitly. `registerType()` now
+takes the class as an argument and the probe passes `typeClass(parent)` -
+the parent is `cRemoteCall`, so the mod's type is class 16 as well. The
+verification checks both the class and that the type resolves to the very
+same class record as its parent.
+
+### The allocator path
+
+The class record is a heap object; its vtable is `0x0109D1A8`. The slots
+that matter:
+
+```
+record->vtable[6]   the real alloc(size, flags, typeId, 0)
+record->vtable[7]   alloc(this = record, size, 0x10, typeId)   __thiscall
+record->vtable[8]   alloc(size, flags)                          raw
+record->vtable[12]  free(ptr)
+```
+
+`FUN_00878000` is the game's own creator of a sync payload:
+
+```c
+piVar1 = FUN_008e1660(&DAT_01183b30);                    // class record
+puVar2 = (*piVar1->vtable[7])(8, 0x10, DAT_01183b4c);    // alloc, this = record
+if (puVar2) {
+    FUN_009ccd80();        // *instance = &PTR_LAB_010c4b9c; instance[1] = 0
+    puVar2[1] = 2;
+    *puVar2 = &PTR_LAB_010904b8;   // the instance vtable of that type
+}
+```
+
+### The crash: a `__thiscall` called as `__cdecl`
+
+The first version of `createTypeInstance()` called `vtable[7]` as a plain
+function. The slot is a `__thiscall` method whose `this` is the class
+record; with `ecx` left holding whatever the compiler had there, the method
+dereferenced garbage and the game died about six seconds in:
+
+```
+Id 1000, rerev.exe, 0xc0000005
+faulting module: unknown, offset 0x2A28
+faulting address: 0x1DD621B8A37C411
+```
+
+The faulting address is a stack-shaped value used as a call target - the
+signature of a call through a `this` pointer that was never set.
+
+The fix is one typedef: the allocator is
+`void* (__thiscall*)(void* self, uint32_t size, uint32_t flags, uint32_t typeId)`
+and is called with the class record as `self`. A second, independent guard
+was added at the same time: the slot is only called when it points into the
+game image, so a class record that is not fully built yet cannot be called
+by accident.
+
+### Verified in the running game
+
+```
+net registry: the sync payload parent is 'cRemoteCall' (size=8 class=16 id=4cd24d24)
+net registry: registering 're1coop::cCampaignSyncData' with class=16
+net registry: registered 're1coop::cCampaignSyncData' size=32 class=16 id=57fe3c6a
+net registry: 're1coop::cCampaignSyncData' found at 68c0c1bc (id=57fe3c6a, parent='cRemoteCall')
+net registry: 're1coop::cCampaignSyncData' shares the class record of its parent at 058ceac0
+net registry: class record 058ceac0, vtable 0109d1a8
+net registry: allocated an instance of 're1coop::cCampaignSyncData' at 215f8370
+net session: manager=21648f30 session=00000000 playmode=-1 player=-1 flags=00000000 status=0
+```
+
+The game boots, reaches the main menu and keeps running with an instance of
+the mod's own type allocated from the game's NETWORK heap. Nine ctest cases
+pass.
+
+### What this proves and what it does not
+
+Proven: the mod can
+
+* find the game's type registry and read it safely (validated descriptors,
+  depth limit, node budget);
+* insert a type of its own into it, in the same class and under the same
+  parent as the game's own sync payloads;
+* turn that type into an instance through the game's own allocator, i.e.
+  memory the game's serialiser and transport accept.
+
+Not proven yet: that the game will **serialise and send** that instance,
+and that the campaign will accept a session. The send path is decoded
+(`FUN_00882FD0 -> FUN_009CDE40 -> FUN_00A11030 -> FUN_00BE2900`) but has not
+been driven; the session is still `0` in the campaign.
+
+### The open question for milestone 2
+
+The class record's instance-creator also sets a per-type **instance vtable**
+(`0x010904B8` for the type in `FUN_00878000`). The mod's type does not have
+one yet. Whether the game needs it for serialisation, or whether the
+serialiser only reads the payload bytes the type declares, is the next thing
+to establish - it decides whether the mod's payload can be a plain data
+struct or needs a vtable of the same shape as the game's.
+
+### Repo state
+
+* mod repo: `85a1fbf` "Milestone 1: register a type of our own in the game's
+  network registry" - committed, LF-only blobs, 9/9 ctest.
+* hub: this file and the game README updated with the corrected class id and
+  the allocator findings. Nothing pushed; PR #126 is still a draft.
