@@ -44,7 +44,7 @@
 - `P5RCoop.Core/TurnOwnership`: pure rule for who owns input (alternate by party slot, per-character pins,
   field player or shared field). 19/19 offline checks pass (`dotnet run --project P5RCoop.Tests`).
 - `p5rpc.coop`: Reloaded-II mod that hooks `XInputGetState` in xinput1_4 (system DLL, not the protected exe)
-  and shows the game only the owner's pad as pad 0. Builds; **not run in game yet**.
+  and shows the game only the tester's pad as pad 0. Builds; **not run in game yet**.
 
 ### Unknowns (need the game running)
 - Whether P5R reads pads through XInput, Steam Input or DirectInput when Steam Input is on/off, and how
@@ -66,7 +66,7 @@ QA level: untested (no in-game run).
 - Next: `p5r-coop/tools/turnprobe.py` (read-only memory snapshots on F9) during one battle with Direct Commands.
 
 ## 2026-10-30 Battle actor found (probe run 1)
-- Probe: 4 snapshots in one battle, owner-reported actors Joker, Morgana, Ann, Ryuji (Direct Commands).
+- Probe: 4 snapshots in one battle, tester-reported actors Joker, Morgana, Ann, Ryuji (Direct Commands).
 - **Observed:** static `P5R.exe+0x293EEF8` (u64) -> battle object (0x115994E90 in that run, same in all 4 snapshots).
   - `+0x592` u16 = acting chara id: 1, 3, 4, 2 (matches Joker=1, Morgana=3, Ann=4, Ryuji=2).
   - `+0x2B0`, `+0x2BC`, `+0x2C4` u32 = 0, 1, 2, 3 (turn or party slot index; unknown which).
@@ -78,8 +78,8 @@ QA level: untested (no in-game run).
   logs every change, and feeds `ActorTracker` (party order = order of first action in each battle).
   Offline checks: 28/28 pass. In-game routing: not yet tested.
 
-## 2026-10-30 Owner test of v0.2.0 (3 battles, 2 launches): FAILED
-- Owner report: first battle "felt" like it worked, then only pad 1 worked.
+## 2026-10-30 Tester test of v0.2.0 (3 battles, 2 launches): FAILED
+- Tester report: first battle "felt" like it worked, then only pad 1 worked.
 - **Observed in the mod log:** `P5R.exe+0x293EEF8` read 0 for the whole of both launches, so the mod never saw a
   battle and pad 1 owned input throughout. The "first battle worked" impression is not supported by the log.
 - **Derived:** 0x14293EEF8 has no RIP-relative code references (scanned every section), so it is not a real
@@ -89,7 +89,7 @@ QA level: untested (no in-game run).
   its 4 snapshots. Session 2 probe pending to filter them.
 
 ## 2026-10-30 Probe run 2 (new launch): actor chain confirmed across launches
-- Owner-reported actors (8 F9 presses): Joker, Joker (One More), Morgana, Ann, Ryuji, Morgana, Ann, Ann (One More).
+- Tester-reported actors (8 F9 presses): Joker, Joker (One More), Morgana, Ann, Ryuji, Morgana, Ann, Ann (One More).
 - ptrscan: 481 chains from session 1 -> **23 valid in both sessions**.
 - **Observed:** these 6 chains (statics with code refs) give the right id in all 12 snapshots, both launches:
   `+0x286C2A8 ->+0x88 ->+0x48 ->+0x592` (142 code refs), `+0x2900BF8 ->+0x98 ->+0x48`, `+0x2530FB0 ->+0x90 ->+0x48`,
@@ -98,7 +98,7 @@ QA level: untested (no in-game run).
 - Mod v0.3.0 reads all 6 and needs 2 to agree. Offline: 28/28 checks; vote replay matches both sessions.
 - Unknown: what these chains read outside battle (no field snapshot yet). The mod logs every change to find out.
 
-## 2026-10-30 Owner test of v0.3.0: FAILED (pad 2 never got control) — root cause found
+## 2026-10-30 Tester test of v0.3.0: FAILED (pad 2 never got control) — root cause found
 - **Observed in the mod log:** all 6 chains read 0 for the whole session, battles included.
 - **Root cause (checked in a scratch app):** the mod kept `Process.GetCurrentProcess().Handle` as a raw handle; when
   the Process object is finalized the handle is closed, and ReadProcessMemory fails with error 6 from then on.
@@ -107,25 +107,25 @@ QA level: untested (no in-game run).
 - v0.3.1: pseudo-handle, logs failed reads of statics, logs the first static at startup.
 - Playbook lesson: a read helper that returns 0 on failure hides bugs as "not in battle". Log failures.
 
-## 2026-10-30 Owner test of v0.3.1: battle detection WORKS, pad 2 not usable
+## 2026-10-30 Tester test of v0.3.1: battle detection WORKS, pad 2 not usable
 - **Observed in the mod log:** actor sequence Joker, Morgana, Ann, Ryuji, Joker, Morgana with 6/6 votes; back to
   `field` when the battle ended (chains read 0 or junk, votes < 2). The first static reads 0 at the title screen.
   Chain `+0x2536F78 ->+0x18 ->+0x18` is noisy at battle start (junk for ~1 s); the vote absorbs it.
-- Owner report: on Player 2 turns the game said "controller disconnected"; pad 1 was blocked as designed; the keyboard
+- Tester report: on Player 2 turns the game said "controller disconnected"; pad 1 was blocked as designed; the keyboard
   still worked (not gated).
 - **Observed (Device Manager):** one pad was in XInput mode (listed as "Xbox 360 controller"); the other was in
   plain HID / DirectInput mode, so it has no XInput index.
 - **Derived:** P2 was mapped to XInput index 1, which was empty, so the gate passed a disconnected pad as pad 0.
-- v0.4.0: pads auto-assigned from connected XInput indices (Player N = Nth connected pad); if the owner has no
+- v0.4.0: pads auto-assigned from connected XInput indices (Player N = Nth connected pad); if the tester has no
   connected pad, every pad passes (never a lock-out). Logs the connected pad list. Offline: 32/32 checks.
 - Open: DirectInput pads are not gated or mapped yet. Remote Play guests should appear as XInput (unverified).
 
-## 2026-10-30 Owner test of v0.4.0: battle turn rotation WORKS on one PC with two XInput pads
-- Setup: both pads switched to XInput mode. Owner report: "everything worked".
+## 2026-10-30 Tester test of v0.4.0: battle turn rotation WORKS on one PC with two XInput pads
+- Setup: both pads switched to XInput mode. Tester report: "everything worked".
 - **Observed in the mod log:** pads connected [0,1]; Joker (P1, pad 0) -> Morgana (P2, pad 1, logged `owner=P2 pad=1`)
   -> Ann (P1) -> back to field (P1, pad 0) after the battle.
 - v0.4.1 logs actor decisions only (v0.4.0 logged junk reads from one chain hundreds of times per load screen).
-- QA level: manual owner playtest on one PC, 1 battle in the log. No automated test yet; Remote Play Together untested;
+- QA level: manual tester playtest on one PC, 1 battle in the log. No automated test yet; Remote Play Together untested;
   keyboard and DirectInput pads not gated.
 
 ## 2026-10-30 Remote route
@@ -135,7 +135,7 @@ QA level: untested (no in-game run).
 - **Derived:** use a general streaming host that turns guest pads into virtual XInput pads on the host (e.g. Parsec).
   The mod already maps "Nth connected XInput pad" to Player N, so a guest pad should become Player 2. Unverified.
 
-## 2026-10-30 Owner decision: two game instances (own screen each), linked over Tailscale
+## 2026-10-30 Tester decision: two game instances (own screen each), linked over Tailscale
 - No streaming (Parsec / Remote Play) wanted. This changes the project from input routing on one PC
   (done, v0.4.1) to real netcode between two P5R instances.
 - **Derived plan (playbook networking.md defaults):** host-authoritative; transport = plain UDP/TCP to the host's
@@ -145,6 +145,6 @@ QA level: untested (no in-game run).
   encounter on the guest. All `unknown` so far.
 - Field / story: host owns calendar, flags, confidants; guest follows. Seeing each other's avatar = puppet spawning
   (step 3), `unknown`.
-- Owner: the friend does not own P5R. Two-instance co-op is blocked until they do. Steam Family Sharing (listed
+- Tester: the friend does not own P5R. Two-instance co-op is blocked until they do. Steam Family Sharing (listed
   for 1687950) lets one person play a shared game at a time, so it cannot run two copies at once. Not pursuing
   any licence or DRM workaround (AGENTS.md rule 10).

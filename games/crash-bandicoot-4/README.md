@@ -78,7 +78,7 @@ Settings used: [tools/UE4SS-settings-changes.md](tools/UE4SS-settings-changes.md
 
 ## QA
 
-None yet. Manual runs only (owner launching, this session reading logs and minidumps):
+None yet. Manual runs only (tester launching, this session reading logs and minidumps):
 
 - Listen server: `open /L113/Maps/L113_MASTER?listen` in copy A reloads the level as host (new GameMode instance), no crash.
 - Second copy on the same PC (plain launch, and again with `-windowed -nosteam -userdir=<own folder>`): fatal error

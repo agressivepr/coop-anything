@@ -1,4 +1,4 @@
-# Draft issue for crxhvrd/overgrowth-online (for the owner to post)
+# Draft issue for crxhvrd/overgrowth-online (for the tester to post)
 
 **Title:** Join refused with "not using the same mods" when both players have the same mods: the active-mod list is compared in discovery order
 

@@ -26,7 +26,7 @@ Full engine source plus every shipped script (`Data/Scripts/*.as`). The engine a
 
 ## What we changed
 
-A fix sent to the fork as [crxhvrd/overgrowth-online#1](https://github.com/crxhvrd/overgrowth-online/pull/1) (branch `fix/mod-list-order` on the owner's fork), verified with the harness: the shipped build fails the join only when the same mods are found in a different order, the fixed build passes both ways. The report:
+A fix sent to the fork as [crxhvrd/overgrowth-online#1](https://github.com/crxhvrd/overgrowth-online/pull/1) (branch `fix/mod-list-order` on the tester's fork), verified with the harness: the shipped build fails the join only when the same mods are found in a different order, the fixed build passes both ways. The report:
 
 - **Join refused with "not using the same mods" between identical installs.** The host compares the active-mod list as a string built in mod discovery order; Workshop mods are discovered in callback order, which differs per process. Also, the fork's installer writes a mod config without the player's Workshop subscriptions, so the engine activates all of them on first start. Workaround: set every Workshop mod to deactivated on every machine. Fix: sorted comparison, and an installer that carries over activation states.
 

@@ -7,7 +7,7 @@ Started 2026-10-30. Phase 0 (triage), following AGENTS.md and playbook/triage.md
 | Field | Value |
 |---|---|
 | Title | Crash Bandicoot 4: It's About Time (Toys for Bob / Activision, 2020; PC 2021) |
-| Store | Steam (app 1378990), confirmed by owner 2026-10-30 |
+| Store | Steam (app 1378990), confirmed by tester 2026-10-30 |
 | Version / build id | Steam build; exe PE timestamp 1663342796 (2022-09-16 UTC); ProductVersion 1.0.0; Steam build id unknown |
 | SHA-256 of main exe | f78bebcc3cf183aac47cc7e60faaed0bd9f9db4bef41e407b2c16a75a696ddec (Lava/Binaries/Win64/CrashBandicoot4.exe, 73,440,520 bytes) |
 | Engine | Unreal Engine 4.24 (exe string ++UE4+Release-4.24); UE project name "Lava" |
@@ -34,9 +34,9 @@ Started 2026-10-30. Phase 0 (triage), following AGENTS.md and playbook/triage.md
 - The Wikipedia engine claim may be wrong, since the fan tooling around this series is Alchemy/IGZ based. Treat as unconfirmed until the install is inspected.
 - Battle.net always-online DRM may complicate running two copies on one PC for bot testing.
 
-## Unknowns / next checks (need the owner's PC)
+## Unknowns / next checks (need the tester's PC)
 
-1. Steam build id (owner: Steam > Crash 4 > Properties > Updates).
+1. Steam build id (tester: Steam > Crash 4 > Properties > Updates).
 2. Whether UE4SS loads on this build (in a copy of the install).
 3. SDK dump of game classes (Dumper-7) to map the player pawn, camera, checkpoints, saves.
 
@@ -44,7 +44,7 @@ Started 2026-10-30. Phase 0 (triage), following AGENTS.md and playbook/triage.md
 
 - Steam Remote Play Together streams a local-multiplayer game to friends online; it would let friends join Pass N. Play turns. Whether Crash 4 is listed for it is unknown — check the Steam store page features list.
 
-## Owner's goal (2026-10-30)
+## Tester's goal (2026-10-30)
 
 Couch co-op (split screen or two monitors) and online with friends.
 
@@ -52,9 +52,9 @@ Couch co-op (split screen or two monitors) and online with friends.
 
 - Split screen is a layer on top of multiplayer: two copies on one PC talking over the local network. So online co-op comes first; the couch version then reuses it via Couchlink (one copy per player, per-copy controller).
 - Alternative couch route: a second Crash inside one running copy (the Dave the Diver approach). Cheaper than networking, but Crash 4's camera follows one player, so a shared screen needs camera work. Decide after the engine is known.
-- Next session needs the owner's PC (desktop app link) for the install listing, exe hash and engine check.
+- Next session needs the tester's PC (desktop app link) for the install listing, exe hash and engine check.
 
-## Install inspection (2026-10-30, read-only, from the owner's PC)
+## Install inspection (2026-10-30, read-only, from the tester's PC)
 
 Observations:
 - Layout: `Engine/`, `Lava/Binaries/Win64/CrashBandicoot4.exe`, `Lava/Content/Paks/` (646 `pakchunk*-WindowsNoEditor.pak`, about 22 GB), `Lava/Content/Movies/`. Standard UE4 packaged-game layout.
@@ -69,12 +69,12 @@ Derived:
 
 ## Workspace (2026-10-30)
 
-- Test copy made by the owner: `<test copy>` (outside Steam). Verified: exe SHA-256 identical to the Steam install (f78bebcc…96ddec); all 810 files listed at depth ≤5 match name and size; Movies/134 spot check 399 files in both.
+- Test copy made by the tester: `<test copy>` (outside Steam). Verified: exe SHA-256 identical to the Steam install (f78bebcc…96ddec); all 810 files listed at depth ≤5 match name and size; Movies/134 spot check 399 files in both.
 - UE4SS chosen: v3.0.1 (latest stable tag, release 2024-02-14), official asset `https://github.com/UE4SS-RE/RE-UE4SS/releases/download/v3.0.1/UE4SS_v3.0.1.zip`, SHA-256 `4b47d4bceddd2f561a4e395bfa00924ccfc945af576a2d0c613e6537846c57ec`, 5,523,402 bytes. GitHub shows no published digest for this 2024 release, so the hash is ours, recorded for pinning. README at the tag says it targets UE 4.12 to 5.3 (covers 4.24).
 - Install method: proxy `dwmapi.dll` + `UE4SS.dll` + `UE4SS-settings.ini` + `Mods/` next to the copy's `Lava/Binaries/Win64/CrashBandicoot4.exe`.
 - Pitfall to handle: a Steam game started outside Steam may call SteamAPI_RestartAppIfNecessary and relaunch the Steam install instead of the copy. Mitigation: `steam_appid.txt` containing `1378990` next to the copy's exe (unverified for this game).
 - UE4SS ships a `SplitScreenMod` sample: UE4 has engine-level local split screen (multiple local players per viewport). Worth testing on Crash 4 as the cheap couch route.
-- 2026-10-30 17:5x: UE4SS v3.0.1 installed into the test copy's `Lava/Binaries/Win64` with owner approval (23 files: dwmapi.dll, UE4SS.dll, UE4SS-settings.ini, Changelog.md, README.md, Mods/, plus steam_appid.txt = 1378990). One settings change from the release: `ConsoleEnabled = 1`. Steam install untouched. Load test pending (owner launches the copy's exe).
+- 2026-10-30 17:5x: UE4SS v3.0.1 installed into the test copy's `Lava/Binaries/Win64` with tester approval (23 files: dwmapi.dll, UE4SS.dll, UE4SS-settings.ini, Changelog.md, README.md, Mods/, plus steam_appid.txt = 1378990). One settings change from the release: `ConsoleEnabled = 1`. Steam install untouched. Load test pending (tester launches the copy's exe).
 
 ## UE4SS load test 1 (2026-10-30 22:05 UTC) — FAILED to find engine internals
 
@@ -87,22 +87,22 @@ Observations:
 Derived:
 - UE4SS, loaded through the dwmapi.dll proxy before the game's entry point, scans `.text` while it is still encrypted by SteamStub, so every signature misses.
 
-Options (not chosen yet; owner decides):
+Options (not chosen yet; tester decides):
 1. Manual injection (documented in UE4SS docs/installation-guide.md "Manual Injection"): remove dwmapi.dll, start the game, inject UE4SS.dll once the game is at the title screen (code decrypted by then). Needs an injector program; no DRM change.
-2. Remove SteamStub from the test copy's exe with Steamless (open-source tool). Simplest for tooling, but it is DRM removal: legal grey area, owner's call; not done.
+2. Remove SteamStub from the test copy's exe with Steamless (open-source tool). Simplest for tooling, but it is DRM removal: legal grey area, tester's call; not done.
 3. Set the issue #720 hook workaround in either case.
 
-## Option 1 chosen: manual injection (2026-10-30 22:18 UTC, owner approved)
+## Option 1 chosen: manual injection (2026-10-30 22:18 UTC, tester approved)
 
-- Written for this project (no third-party injector): `inject-ue4ss.ps1` + `inject-ue4ss.bat` in the test copy's Win64 folder. Plain LoadLibraryW + CreateRemoteThread from PowerShell Add-Type; refuses to inject unless the running exe path contains `Crash4-CoopTest`; waits for the owner to press Enter at the title screen.
+- Written for this project (no third-party injector): `inject-ue4ss.ps1` + `inject-ue4ss.bat` in the test copy's Win64 folder. Plain LoadLibraryW + CreateRemoteThread from PowerShell Add-Type; refuses to inject unless the running exe path contains `Crash4-CoopTest`; waits for the tester to press Enter at the title screen.
 - Settings: `HookInitGameState = 0` (v3.0.1 has no `HookLoadMap` key; issue #720 workaround partly applied).
-- Owner must delete `dwmapi.dll` from the test copy first (the bridge cannot delete files), or UE4SS loads twice.
-- Testing limit: this session cannot launch the game; the owner launches and presses Enter, this session reads UE4SS.log.
+- Tester must delete `dwmapi.dll` from the test copy first (the bridge cannot delete files), or UE4SS loads twice.
+- Testing limit: this session cannot launch the game; the tester launches and presses Enter, this session reads UE4SS.log.
 
 ## UE4SS load test 2 (2026-10-30 22:20 UTC): injection works, then fatal error
 
 Observations:
-- Injected at the title screen with inject-ue4ss.ps1 (dwmapi.dll deleted by owner). PS scan succeeded on attempt 1: EngineVersion 4.24, GUObjectArray, GMalloc, FName::ToString, FName ctor, StaticConstructObject_Internal, FText ctor all found. Member offsets resolved, mods started, "Event loop start".
+- Injected at the title screen with inject-ue4ss.ps1 (dwmapi.dll deleted by tester). PS scan succeeded on attempt 1: EngineVersion 4.24, GUObjectArray, GMalloc, FName::ToString, FName ctor, StaticConstructObject_Internal, FText ctor all found. Member offsets resolved, mods started, "Event loop start".
 - Then the game hit a fatal error ~118 s after launch. Crash report (`%LOCALAPPDATA%\CrashBandicoot4\Saved\Crashes\UE4CC-Windows-0A2D769D…`): EXCEPTION_ACCESS_VIOLATION reading 0xffffffff, engine 4.24.2. Minidump (parsed by hand): faulting RIP in VCRUNTIME140.dll+0x1cca7 (memcpy); stack: UE4SS.dll+0x37cab3, +0x37c982, +0x554aaa, then CrashBandicoot4.exe frames. RDX/RSI = 0x006e006f00690067 = UTF-16 text "gion" used as a pointer.
 - Game config/saves live in `%LOCALAPPDATA%\CrashBandicoot4\Saved\` (Config, Crashes, Logs, SaveGames). The test copy shares this folder with the Steam install.
 
@@ -112,7 +112,7 @@ Derived:
 Test 3 config (written 22:3x UTC):
 - Hooks off: InitGameState, CallFunctionByNameWithArguments, BeginPlay, LocalPlayerExec. On: ProcessInternal, ProcessLocalScriptFunction.
 - Mods: only Keybinds + new `CoopAutoDump` (10 s after start: DumpAllObjects, then GenerateSDK). Console/cheat/BP-loader mods off.
-- Risk: saves are shared with the real game; owner asked to back up SaveGames first (rule 2).
+- Risk: saves are shared with the real game; tester asked to back up SaveGames first (rule 2).
 
 ## Test 3 (22:30 UTC): same crash; root cause found
 
@@ -156,7 +156,7 @@ Setup for next session: CoopAutoDump off; ConsoleEnablerMod on (F10 opens the UE
 Observations:
 - Host: `open /L113/Maps/L113_MASTER?listen` in copy A reloaded the level (World none at 23:13:03, back at 23:13:41 with a new GameMode instance, still BP_GameMode_Crash_SinglePlayer_C). No crash.
 - Copy B (second process, plain launch, before injection): fatal error. Crash report UE4CC-Windows-6DCC6AD1…: ACCESS_VIOLATION reading 0x0 at CrashBandicoot4.exe+0xc31cf1; UE4SS not loaded in that process; process created 23:13:38, crashed ~23:14:34 (about 56 s, during startup/title). steam_api64/steamclient64/gameoverlayrenderer64 loaded.
-- No published Nucleus Co-op handler for Crash 4 found (web search; owner's local Nucleus handlers folder has none).
+- No published Nucleus Co-op handler for Crash 4 found (web search; tester's local Nucleus handlers folder has none).
 
 Derived / guesses:
 - The game does not tolerate a second instance as-is. Suspects: shared `%LOCALAPPDATA%\CrashBandicoot4\Saved` (config/save locks) or the same Steam user in two instances. Unverified.

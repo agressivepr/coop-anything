@@ -71,19 +71,19 @@ module in `rels.arc` (the original is kept) and uses its own Dolphin settings fo
 - **Enemies.** Defeats: the kill bits of the current area are resent and OR-merged, only within the same area, and
   the puppet removes enemies the other player defeated that are alive right now. Live enemies: the host gives each
   enemy to the player whose Link is nearer (with hold time and margin, epochs on every change, following the
-  [actor ownership playbook](../../playbook/actor-ownership.md)); the other game pulls its copy to the owner's position,
+  [actor ownership playbook](../../playbook/actor-ownership.md)); the other game pulls its copy to the tester's position,
   facing and, for the four types above, animation and frame. Health is the lower of both games.
 
 ## QA
 
 - `python -I mod/qa/coop_qa.py` (in the [ss-coop](https://github.com/ItsPainY/ss-coop) repo) boots two Dolphins from savestates, connects host and join over loopback and drives
   both games through memory, no human input. It prints one `RESULT: PASS|FAIL` line and a JSON report; it checks the
-  owner's real save files are unchanged (hash) and that both test Dolphins exited.
+  tester's real save files are unchanged (hash) and that both test Dolphins exited.
 - 21 checks: game start and build; connect; position both ways (teleport, the puppet must arrive within 10 units);
   facing and animation in the mailbox; equipment; held items; a story flag set and cleared (live and save copy);
   small key pickup and use, and a chest; the mass-clear brake (a wiped game must not wipe the other); enemy kill
   (gone from the other game, bit set in both copies); enemy ownership and following with a real Remlit, including a
-  handoff; enemy animation (the owner's Remlit switches, the other copy follows within a few frames); outfit change
+  handoff; enemy animation (the tester's Remlit switches, the other copy follows within a few frames); outfit change
   (two respawns, heap back to its level, game alive); disconnect and reconnect; a 5-second invariant monitor.
 - Mutation twins: bridges deliberately broken by an environment switch (`no_position`, `no_flag_apply`,
   `no_mass_clear_brake`, `no_enemy_apply`, `no_held`, `no_enemy_anim`) each fail exactly the check meant to catch them.
@@ -121,7 +121,7 @@ be picked in Dolphin's Controllers window.
 
 ## Next steps
 
-- Enemies hitting the other player: the owner's enemy should damage the puppet's player (detect the hit on the puppet,
+- Enemies hitting the other player: the tester's enemy should damage the puppet's player (detect the hit on the puppet,
   send it across).
 - Animation sync for more enemy types as the decomp covers them (Bokoblins first).
 - A savestate further into the game (sword, items, enemies nearby) so the bot can check real equipment and a real fight.

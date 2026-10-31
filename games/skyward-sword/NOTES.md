@@ -23,7 +23,7 @@ with 637/637 files byte-identical (`dtk shasum -c config/SOUE01/build.sha1`).
 - Dolphin 2609a has three mapped views that start with `SOUE01` (sizes 0x2000000, 0x2000000, 0x1800000). All three
   are live (~160k words changed per second) and agree, so any of them works.
 
-Live session 2026-10-25, new file, owner driving Link (human, not a bot):
+Live session 2026-10-25, new file, tester driving Link (human, not a bot):
 
 - **Player pointer** `dAcPy_c::LINK` (0x8057578C) = 0x80B7652C (MEM1). Same value after a stage change.
 - **Position** LINK+0xC0 (3 x f32, big endian) verified: tracked walking (X 329..3890, Z -2902..-409),
@@ -42,7 +42,7 @@ Live session 2026-10-25, new file, owner driving Link (human, not a bot):
 - Health from mFileA: 24/24 quarter-hearts (6 hearts) on a new file.
 
 Not checked: whether the "first frozen recording" (position constant for 40 s) was Link idling in a text box.
-The owner first said they walked, later said they had not. All later recordings moved as expected.
+The tester first said they walked, later said they had not. All later recordings moved as expected.
 
 ### Derived from the decomp
 
@@ -129,7 +129,7 @@ game code built with the decomp's own toolchain. Decomp license is CC0, so deriv
    - Cutscenes and dialog: not synced in v1, each player plays their own.
 5. **Transport:** v1 plain UDP in the bridge (Python stdlib, no installs), host and join by IP. Works on
    LAN, over Tailscale, or with a forwarded port. v2: Steam relay via Spacewar 480 as the playbook
-   recommends, which needs steam_api64.dll from the Steamworks SDK (ask the owner first).
+   recommends, which needs steam_api64.dll from the Steamworks SDK (ask the tester first).
 
 ### Unknowns to settle in the build
 
@@ -141,7 +141,7 @@ game code built with the decomp's own toolchain. Decomp license is CC0, so deriv
 ## Phase 5a: static puppet on screen (2026-10-25)
 
 Result: a second Link body (green tunic `al` model, bind pose = T-pose, no head/hands) renders next to the
-player in Dolphin 2609a, in the Knight Academy and in Skyloft. Owner confirmed with a screenshot.
+player in Dolphin 2609a, in the Knight Academy and in Skyloft. Tester confirmed with a screenshot.
 
 ### Observed
 
@@ -172,7 +172,7 @@ player in Dolphin 2609a, in the Knight Academy and in Skyloft. Owner confirmed w
 
 - Head, face, hands: separate models attached to body joints by callbacks in `daPlayerModelBase_c`
   (d_player_mdl.cpp: sBodyMdls/sHeadMdls/sFaceMdls/sHandMdls, headModelTimingB). Idle animation ("waitS").
-- Outfit: owner's Link wore the Skyloft clothes (`pl_body` set) while the puppet used `al`; follow the remote
+- Outfit: tester's Link wore the Skyloft clothes (`pl_body` set) while the puppet used `al`; follow the remote
   player's tunic type.
 - Keep a short event history in the shared block to explain the unexplained deletion.
 - Then drive the puppet from the bridge (mailbox in the shared block) using a second Dolphin.
@@ -180,8 +180,8 @@ player in Dolphin 2609a, in the Knight Academy and in Skyloft. Owner confirmed w
 ## Phase 5c: puppet follows a second Dolphin (2026-10-25)
 
 Result: two modded Dolphin 2609a instances on one PC (own `-u` user dirs, A and B, each with a copy of the
-owner's save), `mod/bridge/local_bridge.py` attached to both. Each window shows the other window's Link as the
-T-posed puppet; owner confirmed with a screenshot of both windows.
+tester's save), `mod/bridge/local_bridge.py` attached to both. Each window shows the other window's Link as the
+T-posed puppet; tester confirmed with a screenshot of both windows.
 
 ### Observed
 
@@ -195,7 +195,7 @@ T-posed puppet; owner confirmed with a screenshot of both windows.
   stands still when no bridge is attached. Facing is copied directly (no angle smoothing yet).
 - Not yet tested: stage change while the bridge runs (hide/reappear), different rooms of one stage, the
   unexplained deletion (did not happen this session).
-- Test was the owner driving one window by hand; no bot yet (playbook asks for one).
+- Test was the tester driving one window by hand; no bot yet (playbook asks for one).
 
 ## Phase 5d: networked bridge, host and join over UDP (2026-10-25)
 
@@ -215,9 +215,9 @@ peer; host accepts a rejoin. Each side clears its own mailbox on exit. Game acce
 - Real games, loopback, no chaos (40 s): handshake at once, gap 0.0 both ways, 1064 of 1065 received,
   clean BYE ("peer left") and mailboxes cleared on exit.
 - Real games through chaos relay `bad_wifi` (host A <- relay :27646 <- join B), ~3.5 min: host received
-  5702 of 6323, joiner 5685 of 6324, ~400 stale per side, no disconnects. Owner walked one Link around and
+  5702 of 6323, joiner 5685 of 6324, ~400 stale per side, no disconnects. Tester walked one Link around and
   reported the puppet in the other window "looked smooth".
-- Not tested: two real PCs (host needs `--bind 0.0.0.0`, which triggers a Windows Firewall prompt the owner
+- Not tested: two real PCs (host needs `--bind 0.0.0.0`, which triggers a Windows Firewall prompt the tester
   must answer), stage changes while networked, NAT/Tailscale, a bot driving the movement.
 
 ## Phase 5e: story, item and scene flag sync (2026-10-25)
@@ -243,9 +243,9 @@ until acked, applied once. New connection: both send a full snapshot, merged wit
 ### Observed
 
 - Real games, loopback: story action in A only -> B received 3 changed words, 0 resends; both identical after,
-  B's save copy equal to its live array. No dialogue or event appeared in B (owner confirmed).
+  B's save copy equal to its live array. No dialogue or event appeared in B (tester confirmed).
 - A temporary story flag cleared by the game after dialogue was mirrored to the other side as a clear.
-- **Bug found by the owner's reset test:** Dolphin Emulation -> Reset in B sent a clear for story[6] bit 3 to A
+- **Bug found by the tester's reset test:** Dolphin Emulation -> Reset in B sent a clear for story[6] bit 3 to A
   (lost in both). Likely cause (not proven): the flag arrays were zeroed while `LINK` still held its old value,
   so the bridge thought B was in play. Fixes: (1) `in_play()` = LINK points at an actor with profile PLAYER
   (0xC8) and a stage name is loaded; (2) after any load, and when more than 2 words clear in one poll,
@@ -269,19 +269,19 @@ play.ps1 host|join (starts Dolphin, waits for the hook, runs net_bridge.py), REA
 
 ### Observed
 
-- Fresh-folder test on this PC (package + copied Dolphin 2609a + owner's RVZ): setup 11 s, both play.ps1 host
+- Fresh-folder test on this PC (package + copied Dolphin 2609a + tester's RVZ): setup 11 s, both play.ps1 host
   and join found the hook at 0x80002364 and connected over loopback (port 27700).
 - **Save import bug found and fixed:** copying only `wiiking2.sav` made the game write a new empty save at the
   title screen (all flags 0). A save is three files (`wiiking2.sav`, `skip.dat`, `banner.bin`); with all three
   the save stayed byte-identical through a 45 s boot. setup.ps1 now copies the folder and backs up the old one.
-- Not yet tested: two real PCs over the internet (owner hosts with UDP 27645 port-forwarded on the router).
-- **First real two-PC session (2026-10-25, afternoon):** owner hosting via `2 Host.cmd` with UDP 27645
+- Not yet tested: two real PCs over the internet (tester hosts with UDP 27645 port-forwarded on the router).
+- **First real two-PC session (2026-10-25, afternoon):** tester hosting via `2 Host.cmd` with UDP 27645
   port-forwarded on the router, a second player joining over the internet via `3 Join.cmd` with their own SOUE01
-  dump and the host's save. Owner reported: "We're connected and can see each other in the game."
-  Observed by the owner only; no bridge logs from this session (the windows print to the console).
+  dump and the host's save. Tester reported: "We're connected and can see each other in the game."
+  Observed by the tester only; no bridge logs from this session (the windows print to the console).
 - Double-click launchers: `1 Setup.cmd` (file dialog for the dump, `host-save\` picked up on first setup
   only), `2 Host.cmd`, `3 Join.cmd` (asks for the IP, remembers it in last-host.txt, adds port 27645).
-- No-Python build (owner-approved install: PyInstaller 6.22.3 from PyPI into `tools/exe-build` venv, with
+- No-Python build (tester-approved install: PyInstaller 6.22.3 from PyPI into `tools/exe-build` venv, with
   altgraph 0.17.5, packaging 26.3, pefile 2024.8.26, pyinstaller-hooks-contrib 2026.9, pywin32-ctypes 0.2.3,
   setuptools 84.2.1). `release/build/build_exe.ps1` bundles all helpers into `sscoop.exe` (onefile, 9.6 MB,
   unsigned; subcommands bridge/u8/cheats/wait). Fresh-folder test with Python removed from PATH: setup, hook
@@ -311,10 +311,10 @@ in place.
   blend node (the player's case). Fix: call `mdl.setAnm(anm)` again after switching. PLAY_MODE_0 loops.
 - Savestate dev loop (boot `-s state`, swap the REL bytes in RAM) did **not** work: the linked module kept the old
   code although neither the RAM copy of rels.arc nor the disc had it any more (`.text` 0xD74 vs 0xDE4, build
-  marker missing). Cause unknown. Fresh boot + owner loading the save was used instead; screenshots via
+  marker missing). Cause unknown. Fresh boot + tester loading the save was used instead; screenshots via
   `devloop.py shot` (PrintWindow) and a fake remote via `devloop.py walk` let the agent check every build alone.
 - Package v0.2: `release/ss-coop` (folder without version, update by copying over), `setup.ps1` update mode (no disc
-  when `game\rels.arc.original` exists). Update over the owner's v0.1 install: save byte-identical, hook and
+  when `game\rels.arc.original` exists). Update over the tester's v0.1 install: save byte-identical, hook and
   module replaced, patched rels.arc matches the manifest.
 
 ### Not tested
@@ -345,7 +345,7 @@ in place.
   B's save copy; clearing it in A cleared both in B; chest bit set in B reached A live and save copy. All values
   restored afterwards. A real dungeon has not been played with it yet.
 - Protocol magic SSC3: an SSC2 peer rejects FLAGS entries with array ids 3/4, never acks, and the ordered flag
-  channel would stall. Package v0.3 (`release/ss-coop-v0.3.zip`); owner's install updated, save unchanged.
+  channel would stall. Package v0.3 (`release/ss-coop-v0.3.zip`); tester's install updated, save unchanged.
 
 ## Phase 5h: real animations from the remote Link, v0.4 (2026-10-25)
 
@@ -362,7 +362,7 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
 - sAnimations at 0x804DF2FC (443 x 12 bytes, name pointer first); idle Link reads 26 (`waitS`) in all slots.
 - Fixed-animation showcase on B's puppet (screenshots): rollF, jumpSt, cutT on the upper body over waitS on the
   lower body, all posed correctly; climbHang and swimwait sink the body into flat ground as they should.
-- Real path: owner rolled, jumped and swung the sword in A while B was recorded every 1.5 s. Received in B:
+- Real path: tester rolled, jumped and swung the sword in A while B was recorded every 1.5 s. Received in B:
   atsDL, rollBSt, rollBEd, atsJRSt, waitBtoA, each with a matching puppet pose in B's screenshot.
 
 ### Bugs found on the way
@@ -379,8 +379,8 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
   hangs the game. Fix: copy only the MDL0 block (~87 KB) and rebase every name offset that points outside it
   (13 dictionaries' ofsString, ResNodeData/ResMatData::name, toResFileData, name) to the resident original;
   copy and animation buffers live in the actor heap. workExHeap is no longer touched.
-- One owner Shift+F1 did not save (game picture not focused) and a test ran on the old state's build; the agent
-  then killed the owner's window with the new build. Now: check the state file's timestamp first.
+- One tester Shift+F1 did not save (game picture not focused) and a test ran on the old state's build; the agent
+  then killed the tester's window with the new build. Now: check the state file's timestamp first.
 
 ## Phase 5i: sword, sheath and shield on the puppet, v0.5 (2026-10-25)
 
@@ -497,7 +497,7 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
 ### Derived
 - fBase_c DISABLE_EXECUTE (mProcControl +0xF) would stop an enemy entirely, but its model is only recalculated
   in its own execute, so a stopped enemy cannot be moved from outside without per-class code. Chosen instead:
-  the enemy keeps running in both games; the non-owner pulls position/facing to the owner's every frame.
+  the enemy keeps running in both games; the non-tester pulls position/facing to the tester's every frame.
 - dAcEnBase_c::mHealth at +0x342 (u16, public). 56 E_* profiles in f_profile_name.h; 46 shared (parts and
   projectiles such as arrows, cannon shots, tails, leaves, wires, shields, rocks, and E_SIREN excluded).
 - Skyloft F000 by day has two E_REMLY (0x170, Remlits) with placement ids 0x1CA and 0x1D1, health 100.
@@ -505,18 +505,18 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
 ### Design (coop-anything playbook actor-ownership.md, cut to two players)
 - Puppet build 17 lists placed shared enemies each frame into an EnemyTable in its heap (address in
   Shared::enemyTable +0x120) and applies orders (FOLLOW pose, health cap). Shared::testProfile +0x124 for dev.
-- enemy_motion.py: host decides owner = nearer Link (hold 1.5 s, challenger 25 % nearer), epoch from one counter
+- enemy_motion.py: host decides tester = nearer Link (hold 1.5 s, challenger 25 % nearer), epoch from one counter
   that never goes down; OWN (8) repeated, joiner keeps only newer epochs; MOTION (9) used for following only from
-  the owner at exactly the known epoch; health = min of both, no ownership needed. Same stage + 1 s settle.
-- Handoff without Transfer/Ack/Commit: synced state is only pose, which the new owner already shows (it was
+  the tester at exactly the known epoch; health = min of both, no ownership needed. Same stage + 1 s settle.
+- Handoff without Transfer/Ack/Commit: synced state is only pose, which the new tester already shows (it was
   following). Noted as a deviation from the playbook for this state.
 
 ### Observed
-- test_enemy_motion.py: 15 pass (owner choice, handoff epoch, no flapping, hold time, replayed old OWN ignored,
-  past-owner MOTION ignored, mutation twin "no_epoch" caught, health both ways, stage guard, wire, UDP pair).
-- Bot QA build 17 (real Remlit 0x1CA): owner A, B's copy followed a 30-unit nudge (gap 0.0); B's Link moved next
-  to it, owner B, A's copy followed (gap 0.0). RESULT: PASS twice, 19 gates. First version of the gate assumed the
-  host wins ties and failed; the gate now finds the owner first.
+- test_enemy_motion.py: 15 pass (tester choice, handoff epoch, no flapping, hold time, replayed old OWN ignored,
+  past-tester MOTION ignored, mutation twin "no_epoch" caught, health both ways, stage guard, wire, UDP pair).
+- Bot QA build 17 (real Remlit 0x1CA): tester A, B's copy followed a 30-unit nudge (gap 0.0); B's Link moved next
+  to it, tester B, A's copy followed (gap 0.0). RESULT: PASS twice, 19 gates. First version of the gate assumed the
+  host wins ties and failed; the gate now finds the tester first.
 
 ### Not tested / gaps
 - Animations and attacks are not synced (each copy runs its own AI); enemies attack only their own game's Link.
@@ -536,16 +536,16 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
 
 ### Design
 - EnemyEntry/EnemyOrder grow to 0x1C: anim (dictionary index, bit 15 = model file), play mode, frame; order flag
-  ORDER_ANIM and frameSeq. The follower switches animation when its index differs and jumps to the owner's frame only
+  ORDER_ANIM and frameSeq. The follower switches animation when its index differs and jumps to the tester's frame only
   when frameSeq changes (new MOTION), playing on by itself in between. Offsets are used only if the vtable at that
   offset is an AnmMdlWrapper(2). Protocol SSC9 (MOTION + anim u16, mode u8, frame f32). Dev command
   Shared::testAnimObj/testAnimIdx (+0x128) plays an animation on one enemy, for QA.
 
 ### Observed (build 19, Skyloft F000)
 - Both Remlits report animation 0x13 in both games (offset + dictionary walk correct in the real game).
-- test_enemy_motion.py 19 pass (4 new: owner animation/frame reach follower, frame jumps only on new motion,
+- test_enemy_motion.py 19 pass (4 new: tester animation/frame reach follower, frame jumps only on new motion,
   unknown type gets no anim order, twin no_enemy_anim caught).
-- Bot QA: RESULT: PASS, 21 gates; "enemy animation": owner A switched Remlit 0x1CA 0x13 -> 0x0, B's copy followed
+- Bot QA: RESULT: PASS, 21 gates; "enemy animation": tester A switched Remlit 0x1CA 0x13 -> 0x0, B's copy followed
   (frame difference 2.0). Twin `no_enemy_anim` in the game: only "enemy animation" TIMEOUT.
 
 ### Not tested / gaps
@@ -557,7 +557,7 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
 - Players have Xbox controllers, no Wii Remotes. Dolphin's emulated Wii Remote + Nunchuk + MotionPlus is mapped to
   an XInput gamepad (`XInput/0/Gamepad`, any Xbox controller on Windows): left stick = Nunchuk stick, right stick =
   Swing directions, right stick click = Swing forward (stab), LT/LB = Z/C, RB = Nunchuk shake, pointer (IR) on the
-  mouse. Based on the layout the owner set up and played with on an Elite 2 (SDL device), generalized.
+  mouse. Based on the layout the tester set up and played with on an Elite 2 (SDL device), generalized.
 - Package: `controls\Xbox controller (ss-coop).ini` (Dolphin profile), `controls.ps1` (setup adds the profile and uses
   it only if `WiimoteNew.ini` does not exist; `-Apply` / `4 Xbox controls.cmd` replaces it with a timestamped backup).
 - Observed: the script in a scratch folder (fresh, existing kept, -Apply with backup); every XInput input name used
@@ -574,13 +574,13 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
   A night Remlit attacks when Link is within mPatrolAreaSize (1000) of its mStartingPos (dAcObjBase_c +0x1FC), so
   moving the Remlit alone never triggers it. No Keese at night in this save.
 - Faron Woods (F100 room 0) has 7 placed Octoroks (E_OR, ids 0xDC..0xE2). Entering it the first time starts Fi's
-  dialogue, which needs a button press; the bot cannot continue past it. Plan: owner clicks through it once in both
+  dialogue, which needs a button press; the bot cannot continue past it. Plan: tester clicks through it once in both
   test windows and makes savestates there.
-- Done (owner pressed through Fi's dialogue, savestates in F100). Moving an Octorok and its mStartingPos next to Link
-  did not make it attack (Octoroks pop up from their mound when they see Link). Guided session: owner walked COOP A,
+- Done (tester pressed through Fi's dialogue, savestates in F100). Moving an Octorok and its mStartingPos next to Link
+  did not make it attack (Octoroks pop up from their mound when they see Link). Guided session: tester walked COOP A,
   B's Link was kept 80 units next to A by the script; ownership of the nearest Octorok followed (B owned it while B's
   Link was nearer). The reachable part of F100 room 0 ends at a story-locked wall of trunks; all Octoroks sit on
-  ledges 1700-2300 units higher that cannot be reached this early. No hit recorded, so whether the non-owner's copy
+  ledges 1700-2300 units higher that cannot be reached this early. No hit recorded, so whether the non-tester's copy
   hits its own player is still unknown. Enemy hits on the other player wait for a save with reachable hostile
   enemies.
 
@@ -590,7 +590,7 @@ buffer (4 x 0x2400 per slot), and takes the remote frame on every new mail.
 savestates (`start_test.ps1 -FromState`), host and join bridges connect over loopback on a free port, and the bot
 drives both games through memory only. One line `RESULT: PASS|FAIL`, TIMEOUT kept apart from FAIL, JSON in
 `game/qa-out/result.json`, bridge logs next to it. Cleanup: bridges stopped, Dolphins killed and checked gone,
-test words zeroed in both games, owner's saves (the play folder and the original Dolphin) hash-compared before/after.
+test words zeroed in both games, tester's saves (the play folder and the original Dolphin) hash-compared before/after.
 
 Gates: scorer self-test; boot (puppet build byte at block+0x2F == expected, Link + flags readable, same stage,
 game advancing); bridges connect (mail flags 7 both sides); position A->B and B->A (teleport Link +60 X by
@@ -631,7 +631,7 @@ puppet events, both games advancing).
 - `mod/tools/u8.py`: U8 archive list/unpack/pack (pack keeps the original layout via `--like`).
 - `mod/tools/nlz.py`: Nintendo LZ77 (0x10/0x11) decompressor. `mod/tools/puppet_status.py`: hook block + puppet.
 - `mod/scripts/build_mod.ps1`: build the puppet REL, check only it changed, repack rels.arc from the backup.
-- `mod/scripts/start_test.ps1 -PuppetProfileHex 14E`: test Dolphin with its own user dir (copy of the owner's
+- `mod/scripts/start_test.ps1 -PuppetProfileHex 14E`: test Dolphin with its own user dir (copy of the tester's
   controls and save), hook installed, boots `game/extracted`.
 - `ss_mem.py` can now write MEM1 (`Dolphin(writable=True, pid=...)`).
 - `mod/bridge/local_bridge.py PID_A PID_B`: two-way local bridge (60 Hz), clears mailboxes on exit.

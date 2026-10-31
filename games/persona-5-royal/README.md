@@ -5,14 +5,14 @@
 | Engine | Atlus in-house (GFD), closed native x64 binary, Denuvo-protected |
 | Versions tested | Steam 1.0.4.0, `P5R.exe` SHA-256 `5D9E18C383700302D029C947DDF8C811BA6AFA47E60EC1AFA0554D452BDC0CBF`, Windows 11 |
 | Projects | Shared-screen turn-rotation prototype `p5rpc.coop` (Reloaded-II mod, not public yet); directory entry: gap |
-| QA level | none (offline unit checks plus one owner playtest; no automated in-game test) |
+| QA level | none (offline unit checks plus one tester playtest; no automated in-game test) |
 | Last updated | 2026-10-30 |
 
 ## Where things stand
 
 No co-op mod exists. A prototype makes one game copy shared between players: in battle, each party member's turn
 only accepts the controller of the player who owns that character; outside battle Player 1 walks. It worked in
-one owner playtest on one PC with two XInput pads. Two copies on two PCs (own screen each) are not started: they
+one tester playtest on one PC with two XInput pads. Two copies on two PCs (own screen each) are not started: they
 need real netcode, and every player needs their own licence.
 
 ## Existing work
@@ -54,7 +54,7 @@ need real netcode, and every player needs their own licence.
   | `0x2536F78` | `+0x18 -> +0x18 -> +0x592` | 10 (noisy outside battle) |
 
   Outside battle the chains read 0 or junk, so "at least two chains agree on 1..10" is a usable in-battle test
-  (seen in two owner sessions). A "One More" keeps the same actor id. Also seen in the battle object: `+0x2B0`,
+  (seen in two tester sessions). A "One More" keeps the same actor id. Also seen in the battle object: `+0x2B0`,
   `+0x2BC`, `+0x2C4` u32 count 0, 1, 2, 3 over the first four turns (turn or slot index, unknown which).
 - **Traps:** `P5R.exe+0x293EEF8` pointed at the battle object in the first probe but has no code references. Don't
   use it. `0x1423F3E70` is a generic intrusive list head (nodes linked at +8, +0x10, +0x18).
@@ -66,8 +66,8 @@ need real netcode, and every player needs their own licence.
 
 1. **Turn ownership** (pure C#, `P5RCoop.Core`): players take party members round-robin, in the order the characters
    first act in each battle. Optional pins per character; Player 1 walks outside battle.
-2. **XInput gate** (`XInputGetState` hook): the game sees only the owner's pad, as pad 0. Player N gets the Nth
-   connected XInput pad. If the owner has no connected pad, every pad passes.
+2. **XInput gate** (`XInputGetState` hook): the game sees only the tester's pad, as pad 0. Player N gets the Nth
+   connected XInput pad. If the tester has no connected pad, every pad passes.
 3. **Battle actor reader:** polls the six chains every 30 ms through `ReadProcessMemory` on the pseudo-handle
    (`-1`). It caches the result, so the input hook never touches game memory. It logs actor decisions, not raw
    reads.
@@ -81,7 +81,7 @@ Bugs on the way: see lessons 84 and 85 in [playbook/lessons.md](../../playbook/l
   32 passed, 0 failed (2026-10-30). This includes the exact turn order from the in-game probe.
 - Offline replay: the six chains plus the vote, re-read from both probe sessions' snapshots, give the reported actor
   order (4/4 and 8/8).
-- In game: one owner playtest on one PC, two XInput pads. The log shows Joker on pad 0, Morgana on pad 1, Ann on
+- In game: one tester playtest on one PC, two XInput pads. The log shows Joker on pad 0, Morgana on pad 1, Ann on
   pad 0, then field on pad 0. No automated in-game test yet, so the QA level is `none`.
 
 ## How to play
@@ -97,7 +97,7 @@ Not released. The prototype needs Reloaded-II, `reloaded.sharedlib.hooks`, a cop
 ## Next steps
 
 - In-game bot for the turn-rotation test (playbook rule 11), e.g. send pad states through the XInput hook and
-  assert the logged owner.
+  assert the logged tester.
 - Two-copy co-op (own screen each): check battle determinism first (same save, same commands), then command lockstep
   with host ordering and shared RNG, as with BattleTech in
   [how-coop-mods-work.md](../../playbook/how-coop-mods-work.md) 1.6. Needs the battle command function, the battle
