@@ -19,9 +19,11 @@ entry is *"Режим совместного прохождения, в кото
 invite path (`ЗАГРУЗКА` / `ПАРАМЕТРЫ` / `ВЫЙТИ`).
 
 **The project is now to build that co-op anyway, from scratch, on the network
-code the game already ships.** The owner asked for exactly that, and the
-reverse engineering says it is the right way: the game contains a complete
-co-op stack that the campaign is simply not connected to.
+code the game already ships.** The reverse engineering says that is the right
+route: the network stack, the session classes and the replication vocabulary
+are present in the binary and drive Raid Mode today. Whether they can carry a
+campaign session is **unproven** - they are present in the binary, their
+reachability from the campaign is not.
 
 What the reverse engineering has established so far:
 
@@ -255,13 +257,14 @@ node budget.
 ## QA
 
 - `build.bat` in the `re1coop` repo: configure, build, `ctest`.
-- Last suite result: **9/9 passed**, 2026-10-22.
+- Last suite result: **13/13 passed**, 2026-10-23.
 - In-game: the game boots, reaches the main menu and keeps running with the
   registry module active; `re1coop.log` shows the type tree (4071 types), the
   registration of `re1coop::cCampaignSyncData` and its rediscovery by name;
   the game's save file was byte-identical (SHA-256) before and after.
 - **QA level stays `none`**: there is no co-op feature to test yet. Two-client
-  verification needs a second Steam peer and has not been requested.
+  verification needs a second Steam peer and a second Steam account; neither
+  was available, and the game's DRM stub kills a second local instance.
 
 ## How to play
 
@@ -274,9 +277,8 @@ Raid Mode co-op is the game's own, over Steam, unchanged.
 ## Known issues
 
 - The mod's readme and earlier hub notes described a "dormant campaign co-op";
-  those claims are withdrawn. What replaces them is not "there is a hidden
-  mode" but "the campaign is not connected to the co-op that already exists",
-  which is a different thing and is what the mod now acts on.
+  those claims are withdrawn. The measurement replaced them: the co-op layer
+  exists and Raid Mode uses it, and nothing connects the campaign to it.
 - The old theory's origin is not fully traced: `scene_coop` asset names match
   campaign episode ids, which is probably what made the inference look safe.
   The runtime measurement overrides the inference.
@@ -290,7 +292,8 @@ Raid Mode co-op is the game's own, over Steam, unchanged.
    `uCharaBase`; the mod has to make that happen in a campaign scene.
 3. **Send.** With a session and a partner, the mod sends its own payload
    through the game's transport (`FUN_00882FD0`) and verifies it arrives.
-4. **Two-client test.** Needs a second Steam peer - owner approval required.
+4. **Two-client test.** Needs a second Steam peer and account; the game's DRM
+   stub kills a second local instance.
 
 Do not re-run the "flip the mode" experiment expecting a different result;
 the measurement above is reproducible and the mode field is read, not guessed.

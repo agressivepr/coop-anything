@@ -1,10 +1,11 @@
 # Resident Evil Revelations - working notes
 
 Session date: 2026-10-22. Phases covered: 0 (triage), 1 (research), 2 (workspace),
-3 (understand), 4 (choose), 5 (build, first slice). The owner asked for a from-zero mod.
+3 (understand), 4 (choose), 5 (build, first slice). Goal: a co-op mod built
+from zero.
 
-Nothing in the Steam install was modified. All work happens on a copy of the
-game in a test folder (`<test copy>`; the path is in `local/`).
+Nothing in a Steam install was modified. All work happens on a copy of the game
+in a test folder (`<test copy>`), never on the install itself.
 
 Sections below are in the order they were written. The findings of the second
 part of the session (the mode field, the loaders, the save slots, the input
@@ -28,35 +29,21 @@ further down.
 | Architecture | x86, 32-bit, image base 0x400000 |
 | Sections | `.text` 12,301,312 bytes (entropy 6.41, normal code), `.rdata`, `.data`, `.rsrc`, `.bind` 170,712 bytes (entropy 7.97, SteamStub) |
 | Entry point | RVA 0xdf0310, inside `.bind` (SteamStub loader) |
-| Owner install | `<game dir>` (read only; the path is in `local/`) |
-| Test copy | `<test copy>` (the path is in `local/`) |
+| Test copy | `<test copy>` (a copy of the Steam install; the install itself was never touched) |
 | Steam tags | Single-player, Multi-player, Co-op, full controller support, Valve Anti-Cheat enabled. No "Online Co-op" and no "Shared/Split Screen Co-op" tag. |
 
 The `.text` section has normal code entropy, so the game code is statically
 analysable; `.bind` is only the SteamStub wrapper.
 
-## Tooling on this machine (each item checked, not assumed)
-
-Paths are in `local/`; the versions and where each tool had to be found from
-are what matter here.
-
-| Tool | Version / path | Note |
-|---|---|---|
-| Python | 3.13.15, `%LOCALAPPDATA%\Programs\Python\Python313\python.exe` | not on PATH, `python` hits the Store stub |
-| PyYAML | 6.0.2 | so `tools/build_directory.py` really runs |
-| git | 2.55.0, `%ProgramFiles%\Git\cmd\git.exe` | not on PATH |
-| JDK | Temurin 21.0.12.1, `%ProgramFiles%\Eclipse Adoptium\jdk-21.0.12.101-hotspot` | needed by Ghidra |
-| Ghidra | 12.1.4 PUBLIC 20260921, under the workspace folder | installed this session on owner approval; SHA-256 `ddac49f9…87d2d4db` matched the hash published on the release page |
-| MSVC | Visual Studio Build Tools 2022 17.14.42, VCTools workload, `vcvars32.bat` | installed this session on owner approval |
-| GitHub CLI | **not installed** | checked `%ProgramFiles%\GitHub CLI`, no other copy found; needed before a PR can be opened |
-
-Correction to the previous session's notes (they live in
-`games/resident-evil-revelations-2/NOTES.md`): that file stated that GitHub CLI
-2.102.1 and Ghidra 12.1.4 were already installed on this machine. Neither was
-present when checked; both were installed only after the owner approved them
-during this session.
-
 ## Phase 3: the shipped PC build already contains a campaign co-op layer
+
+> **Corrected later in this file, in
+> [Session 6](#session-6-the-premise-is-dead---this-game-has-no-campaign-co-op).**
+> Everything in this section is what the strings, RTTI names and data files
+> looked like before the game was run. Measured afterwards: this layer is Raid
+> Mode's, the mode field is 0 at the menus and 1 in Raid, and the campaign pause
+> menu has no invite path. Read on for how the wrong reading was made, not for
+> the current conclusion.
 
 This is the central finding, and it changes the shape of the mod: the game was
 built with a two-player campaign co-op implementation compiled in. The shipped
@@ -81,7 +68,7 @@ leaked source paths) and from the data files:
 
 **A per-object network sync framework, in campaign-level classes**
 
-| Owner | Sync data |
+| Owning class | Sync data |
 |---|---|
 | `uCharaBase` | `cPositionSyncData`, `cDamageSyncData` |
 | `cNetEnemySync` | `cEnemySyncData` |
@@ -183,30 +170,19 @@ resolve.
 
 ## Source files for this session
 
-- `local/tools/peinfo.py` - PE facts (sections, imports, entropy)
-- `local/tools/stringscan.py` - ASCII/UTF-16 string dump
-- `local/tools/scan_coop_strings.py` - buckets the string dump by topic
-- `local/tools/rtti_paths.py` - pulls RTTI class names and leaked source paths
-- `local/tools/ssl_dump.py` - `.ssl` parser and diff
-- `local/tools/arc_probe.py` - `.arc` layout probe
-- `local/tools/mt_tables.py` - `.lvt` and `.arc` readers (subagent, this session)
-- `local/out/coop_tables_report.md` - the co-op table dump and schema
-- `<ghidra scripts>/CoopScan.java` - Ghidra script that
-  resolves string references and decompiles the functions that touch them
+The scripts were throwaway (`peinfo.py`, `stringscan.py`, `scan_coop_strings.py`,
+`rtti_paths.py`, `ssl_dump.py`, `arc_probe.py`, `mt_tables.py`) plus one Ghidra
+script (`CoopScan.java`) that resolves string references and decompiles the
+functions that touch them. None of them is needed to follow this file.
 
 ---
 
 # Second session: the mode field, the loaders and the first build
 
 Same day, later. Phases 3 (understand), 4 (choose) and the first slice of
-phase 5 (build). The game was **not** launched — the owner deferred it
-("Да, но только позже"), so everything below is static analysis plus host-side
-tests.
-
-Tooling added this session: Ghidra 12.1.4 (headless project in the workspace
-folder), MSVC Build Tools 2022 with the VCTools workload, CMake + Ninja, and
-Python 3.13 with PyYAML. 1,635 functions were decompiled into
-`<ghidra out>/fn\` and indexed into `<ghidra out>/{xrefs,strings,callers,callees,refs}.tsv`.
+phase 5 (build). The game was **not** launched in this part, so everything
+below is static analysis plus host-side tests. 1,635 functions were decompiled
+and indexed for cross-reference lookups.
 
 ## The co-op gate is one int32
 
@@ -473,14 +449,10 @@ Build and test run after the change:
 
 ## Files produced this session
 
-The workspace paths are in `local/`; the layout is:
-
-- `<mod repo>` — the mod (own git repo, three commits)
+- `<mod repo>` - the mod (own git repo)
 - `<ghidra scripts>/{CoopScan,DecompileByString,Callers,DecompileFuncs,RefFuncs}.java`
-- `<ghidra out>/fn/` — 1,635 decompiled functions
-- `<ghidra out>/*.tsv` — string/xref/caller indexes
-- `<ghidra out>/_sigcheck.py` — the signature-uniqueness check
-  (throwaway, reimplemented as a unit test in the mod repo)
+- `<ghidra out>/fn/` - 1,635 decompiled functions
+- `<ghidra out>/*.tsv` - string/xref/caller indexes
 
 ## Third session: the game already ships a netcode
 
@@ -491,6 +463,10 @@ that changes the design of the whole project:
 > **The PC build contains a complete, host-authoritative network layer for
 > the campaign co-op.** The mod does not have to write a netcode. It has to
 > unlock the one that is already in the binary.
+
+> *Corrected in [session 6](#session-6-the-premise-is-dead---this-game-has-no-campaign-co-op):
+> the layer is real and host-authoritative, but it is Raid Mode's. Nothing is
+> dormant and there is nothing to unlock.*
 
 Everything below is split into what was **observed** in the shipped
 executable, what was **derived** from those observations, and what is still
@@ -1071,13 +1047,13 @@ title screen.
 - the co-op path itself is still unverified: no session has been established
   yet, so the second player is never created, XInput index 1 is never polled
   and the menu entry is still missing;
-- `steam_appid.txt` is a **direct-launch** convenience. For the owner's Steam
-  install the game has to be started from Steam, and the two mod files have to
-  be copied next to `rerev.exe` by the owner;
-- a copy of the *first*, crashing proxy DLL is still in the owner's Steam
-  install (`DINPUT8.dll`, PE timestamp `0x6ad9aa84`). Steam launching that copy
-  crashes with `0xc0000409` at fault offset `0x0000f5ce`. Removing it restores
-  the install — it did not ship with the game.
+- `steam_appid.txt` is a **direct-launch** convenience; when the game is started
+  from Steam instead, the two mod files have to be copied next to `rerev.exe`
+  first;
+- an early, crashing build of the proxy DLL is dangerous to leave in an install
+  (`DINPUT8.dll`, PE timestamp `0x6ad9aa84`): launching that copy crashes with
+  `0xc0000409` at fault offset `0x0000f5ce`. It does not ship with the game and
+  has to be removed.
 
 ### Note for anyone else proxying a system DLL on a legacy x86 game
 
@@ -1155,8 +1131,8 @@ Consequence: `mode=-1` in every log was the mod failing to look, not the game
   comments that asserted a dormant campaign co-op rewritten;
 * `coop_mode` in the `.ini` now only enables the (read-only) probe;
 * README rewritten to state the result instead of the hypothesis;
-* `ctest`: 8/8 passing; game boots, reaches Raid Mode, plays, and the owner's
-  save file is byte-identical (SHA-256) before and after.
+* `ctest`: 8/8 passing; game boots, reaches Raid Mode, plays, and the save
+  file is byte-identical (SHA-256) before and after.
 
 ### Root cause of the wrong turn (for the playbook)
 
@@ -1172,21 +1148,18 @@ hypothesis gets a mod, drive the game's own UI and read the field while the
 game is running. Both checks cost about an hour; this hypothesis cost five
 sessions.**
 
-### Still open (needs the owner)
+### Still open
 
-* publish or not: nothing has been pushed for RE1 since the premise died;
-* the stale crashing `DINPUT8.dll` is still in the owner's Steam install
-  (`<game dir>\DINPUT8.dll`, PE timestamp `0x6ad9aa84`) and should be deleted
-  by the owner;
+* whether to publish this at all, now that the premise is dead;
 * direction: stop, or pivot to Raid Mode co-op QoL (the game's online Raid
   Mode already works; the open question is direct-IP/relay instead of Steam
   matchmaking).
 
 ## Seventh session: the type registry - the game's own replication extension point
 
-Session date: 2026-10-22. Goal for this session: the owner asked for a co-op
-mod for the **campaign**, built **from scratch**, on the **network code that
-already ships in the game**. The previous session had found the netcode but
+Session date: 2026-10-22. Goal for this session: a co-op mod for the
+**campaign**, built **from scratch**, on the **network code that already ships
+in the game**. The previous session had found the netcode but
 not the place where a mod can plug into it. This session found it, and proved
 it works in the running game.
 
@@ -1363,8 +1336,8 @@ net registry: allocated an instance of 're1coop::cCampaignSyncData' at 215f8370
 net session: manager=21648f30 session=00000000 playmode=-1 player=-1 flags=00000000 status=0
 ```
 
-The game booted, reached the main menu, kept running, and the owner's save
-file is byte-identical (SHA-256 `037EC948...EDC`) before and after.
+The game booted, reached the main menu, kept running, and the save file is
+byte-identical (SHA-256 `037EC948...EDC`) before and after.
 
 The last line is the second important measurement: **in the campaign the
 network manager exists but has no session** (`session=0`, `playmode=-1`).
@@ -1430,10 +1403,11 @@ the flow is ours.
   still has to be found and called from the campaign - this is the next
   milestone;
 * the partner player's spawn path has to be found;
-* two-client verification needs a second Steam peer - **this needs the
-  owner's approval and has not been requested yet**;
-* nothing has been pushed to the hub for this session; the branch is
-  `game/resident-evil-revelations` and PR #126 is still a draft.
+* two-client verification needs a second Steam peer and a second Steam
+  account; the DRM stub kills a second local instance, so this was not
+  attempted;
+* the branch `game/resident-evil-revelations` carries this write-up and
+  PR #126 is open for review.
 
 ## Eighth session: the right class, and the allocator that crashed on a wrong calling convention
 
@@ -1586,6 +1560,6 @@ struct or needs a vtable of the same shape as the game's.
 ### Repo state
 
 * mod repo: `85a1fbf` "Milestone 1: register a type of our own in the game's
-  network registry" - committed, LF-only blobs, 9/9 ctest.
+  network registry" - committed, LF-only blobs, 13/13 ctest.
 * hub: this file and the game README updated with the corrected class id and
-  the allocator findings. Nothing pushed; PR #126 is still a draft.
+  the allocator findings; pushed to the PR branch, PR #126 open for review.

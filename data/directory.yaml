@@ -3626,31 +3626,20 @@
   other_urls: []
   kind: gap
   status: none
-  coop_scope:
-    story: unknown
-    enemies: unknown
-    world_state: unknown
-    items: unknown
+  coop_scope: {}
   players: unknown
   networking: unknown
   open_source: unknown
   last_activity: unknown
   qa: none
-  notes: 'CORRECTED 2026-10-22. This game has no campaign co-op, so there is nothing to unlock. The release
-    ships exactly one two-player mode and it is in the main menu: Raid Mode (main menu is КАМПАНИЯ / РЕЖИМ
-    «РЕЙД» / ПАРАМЕТРЫ; the Raid entry is described in-game as «Режим совместного прохождения»), and the
-    campaign pause menu has no invite path (ЗАГРУЗКА / ПАРАМЕТРЫ / ВЫЙТИ). The mode field at
-    *(sGameSystems+0x24)+0x20 was measured in a running game: 0 at the menus, 1 in Raid Mode - so mode 1 is
-    Raid Mode, not a dormant campaign. The earlier note here (scene_coop archives, _coop actor variants,
-    second game-system instance, cCoopSyncData, host-authoritative netcode) described real shipped data, but
-    it belongs to Raid Mode and the network layer Raid Mode uses; the inference that it was a disabled
-    campaign was wrong. An unpublished proxy dinput8.dll (re1coop) remains as instrumentation only: it reads
-    the mode/instances/network state and never writes anything. Two useful widgets from it: game objects live
-    on the heap, so validate game pointers with VirtualQuery rather than an image-range check (an image test
-    silently rejected every object and made the mode read -1 forever); and for a proxy system DLL the game
-    imports the undecorated DirectInput8Create, so pin the export with a .def file. Next step, if any, is
-    Raid Mode QoL (direct IP/relay instead of Steam matchmaking) over network::sNetworkManage /
-    nNetwork::Session / SteamNetworking005, not a campaign unlock.'
+  notes: 'CORRECTED 2026-10-22. No campaign co-op: the only two-player mode
+    is Raid Mode in the main menu, the campaign pause menu has no invite
+    path, and the mode field at *(sGameSystems+0x24)+0x20 reads 0 at the
+    menus and 1 in Raid, so the earlier note here about a dormant campaign
+    co-op was wrong. The binary does carry a host-authoritative network layer and
+    an extensible type registry that Raid uses today, but building campaign
+    co-op on them from scratch is unproven - no peer has ever been
+    connected.'
   sources:
   - https://store.steampowered.com/app/222480/Resident_Evil_Revelations/
   - https://steamcommunity.com/app/222480/discussions/
